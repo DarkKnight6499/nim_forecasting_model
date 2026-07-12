@@ -8,31 +8,46 @@ statement, and earnings-at-risk.
 
 ## How it works
 
-1. **Balance sheet buckets** ([config.py](config.py)) - each asset/liability line
-   (loans, securities, deposits, borrowings) has a starting balance, rate, and a
-   repricing behavior:
+1. **Balance sheet positions** ([balance_sheet.yaml](balance_sheet.yaml), loaded via
+   [core/balance_sheet.py](core/balance_sheet.py) into [core/position.py](core/position.py)
+   `Position` objects) - each asset/liability line (loans, securities, deposits, borrowings)
+   has a starting balance, rate, and a repricing behavior:
    - `variable` - reprices with the benchmark rate x beta, on a fixed cadence
      (`reset_frequency_months`; default 1 = every month). C&I loans use a 3-month reset,
      mirroring external-benchmark-linked floating loans that reset quarterly rather than
      continuously (e.g. RLLR/MCLR-style reset tenors) rather than one blanket "variable" bucket.
    - `administered` - bank-controlled rate, partial/lagged repricing (e.g. savings, MMDA).
      NOW and Savings/MMDA are each split into **core** (stable, seasonally-patterned, sticky -
-     long `duration_years`, slow `liquidity_decay_annual`) and **non-core** (volatile/rate-shopped -
-     short duration, fast decay) sub-buckets - standard non-maturity-deposit (NMD) behavioral
-     modeling. `seasonal=True` applies `config.SEASONALITY_INDEX_DEPOSITS` to that bucket's growth.
+     long `behavioral_duration_years`, slow `liquidity_decay_annual`) and **non-core**
+     (volatile/rate-shopped - short duration, fast decay) sub-positions - standard
+     non-maturity-deposit (NMD) behavioral modeling. `seasonal: true` applies
+     `config.SEASONALITY_INDEX_DEPOSITS` to that position's growth. Each position exposes a
+     `repricing_schedule()` (drives the rate sensitivity gap) and a `cashflow_schedule()`
+     (drives the structural liquidity statement) - deliberately different for non-maturity
+     deposits, since a rate reset is not a cash outflow.
    - `fixed_amortizing` - runs off via a constant prepayment rate (CPR); runoff + growth
      is replaced by new production priced at benchmark + spread (e.g. CRE, mortgage, consumer loans)
    - `laddered` - 1/N of the balance matures and renews each month at benchmark + spread
      (e.g. securities, CDs, term debt)
-2. **Rate scenarios** ([model/scenarios.py](model/scenarios.py)) - base/flat, ±100bps, ±200bps,
-   ramped in linearly over 12 months (configurable), applied to a benchmark rate proxy.
-3. **Dynamic engine** ([model/engine.py](model/engine.py)) - steps every bucket forward month by
-   month with growth, computes interest income/expense, and annualized
-   NIM = (interest income − interest expense) × 12 / avg earning assets.
+2. **Yield curve & rate scenarios** ([curve/](curve/)) - a full term structure
+   (`curve/yield_curve.py`), not a single benchmark scalar: spot/forward rates,
+   discount factors, and curve-shape shocks (`curve/shocks.py`: parallel, steepener,
+   flattener, twist). The base curve comes from the live US Treasury daily par yield
+   curve (`data_sources/treasury_curve.py`), falling back to an illustrative shape
+   anchored at `config.STARTING_BENCHMARK_RATE` (optionally FRED-anchored) if the
+   fetch fails. Scenarios (base/flat, ±100bps, ±200bps by default) ramp in linearly
+   over 12 months (configurable) as curve transformations (`curve/scenarios.py`).
+3. **Dynamic engine** ([model/engine.py](model/engine.py)) - steps every position forward
+   month by month with growth, computes interest income/expense, and annualized
+   NIM = (interest income − interest expense) × 12 / avg earning assets. Enforces the
+   balance sheet identity (assets = liabilities + equity) every month from month 1
+   onward: one designated position (short-term borrowings) absorbs a funding
+   shortfall, another (fed funds sold) absorbs a surplus, and equity grows each
+   month by retained net interest income.
 4. **Static ALM reports** ([model/alm_reports.py](model/alm_reports.py)) - point-in-time snapshots
    of the *current* balance sheet (no growth), the classic complement to the dynamic engine above:
    - **Rate Sensitivity Gap**: RSA/RSL and cumulative gap across 7 repricing time bands
-   - **Duration Gap & EVE Sensitivity**: effective duration per bucket, DGAP = D_A − (L/A)·D_L,
+   - **Duration Gap & EVE Sensitivity**: effective duration per position, DGAP = D_A − (L/A)·D_L,
      and ΔEVE (economic value of equity) under each instantaneous rate shock, as % of capital
    - **Structural Liquidity Statement**: inflow/outflow cashflow gap by time band, using
      core-deposit decay (not repricing lag) for non-maturity deposits
@@ -40,13 +55,13 @@ statement, and earnings-at-risk.
      full monthly delta series - a bank can be asset-sensitive near-term and liability-sensitive
      further out, so a single-horizon number can hide a real crossover (see the PNC example below)
 5. **FTP / ALM desk P&L** ([model/ftp.py](model/ftp.py)) - matched-maturity Funds Transfer Pricing:
-   every bucket is charged/credited a transfer rate (benchmark + a tenor-based spread, using the
+   every position is charged/credited a transfer rate (benchmark + a tenor-based spread, using the
    same effective-duration tenor as the EVE calc), splitting total NII into **customer margin**
    (what business units earn vs. the internal transfer price) and **ALM/Treasury desk P&L** (the
    transfer-pricing net - this *is* "ALM NII"). The two always reconcile exactly to total NII by
    construction (checked every run). Also reports ALM desk P&L stability across rate scenarios -
    a well-calibrated FTP curve keeps this roughly flat; the default curve here doesn't (see below).
-6. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + 9 charts.
+6. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
 
 ## Data sources
 
@@ -113,11 +128,14 @@ see "Extending" below for how to tighten this up.
 
 ## Extending
 
-- Swap/add scenarios in `config.RATE_SCENARIOS` (e.g. non-parallel yield curve twists).
+- Swap/add scenarios in `config.RATE_SCENARIOS` - each is a curve shift function
+  (`curve/shocks.py`), so non-parallel scenarios (steepener, flattener, twist) are
+  already supported, not just parallel shocks.
 - Add Call Report category-level fields to `data_sources/fdic_bank.py` (`FIELDS`) for a more precise
-  bucket-by-bucket calibration instead of the current aggregate rescaling.
-- Tune `duration_years` / `liquidity_decay_annual` per bucket in `config.py` - these are behavioral
-  assumptions a real ALCO would set from the bank's own deposit studies, not derived from the data.
+  position-by-position calibration instead of the current aggregate rescaling.
+- Tune `behavioral_duration_years` / `liquidity_decay_annual` per position in `balance_sheet.yaml` -
+  these are behavioral assumptions a real ALCO would set from the bank's own deposit studies,
+  not derived from the data.
 - For stochastic/Monte Carlo rate paths (vs. today's deterministic shock scenarios), replace
-  `model/scenarios.py`'s path builder with a short-rate model (e.g. Vasicek/CIR) sampled N times,
+  `curve/scenarios.py`'s path builder with a short-rate model (e.g. Vasicek/CIR) sampled N times,
   and run `model/engine.py` once per path to get a NIM distribution (and EaR/EVE distributions too).

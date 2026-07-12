@@ -11,9 +11,9 @@ Caveat: the FDIC Call Report has much more granular category-level fields
 (C&I vs CRE vs residential loan splits, deposit-by-type, etc. - see the
 UBPR/SDI data dictionary) than what's pulled here. This module recalibrates
 at the aggregate level (total loans, total securities, total deposits, blended
-yields) and rescales the existing bucket mix proportionally. For a
+yields) and rescales the existing position mix proportionally. For a
 production-grade build, extend `FIELDS` with the specific Call Report
-schedule fields you need and map them 1:1 to buckets instead of rescaling.
+schedule fields you need and map them 1:1 to positions instead of rescaling.
 """
 
 import copy
@@ -63,12 +63,13 @@ def fetch_latest_financials(cert_id):
     return rows[0]["data"]
 
 
-def calibrate_buckets_to_bank(buckets, cert_id):
+def calibrate_positions_to_bank(positions, cert_id):
     """
-    Rescales balances of `buckets` (list of config.Bucket) to a real bank's
-    actual latest Call Report totals, and nudges blended yields/costs toward
-    what that bank actually reports. Returns (new_bucket_list, total_equity_dollars);
-    does not mutate input. total_equity_dollars is None if not reported.
+    Rescales balances of `positions` (list of core.position.Position) to a real
+    bank's actual latest Call Report totals, and rescales rates so day-0
+    modeled income/expense match what that bank actually reports. Returns
+    (new_position_list, total_equity_dollars); does not mutate input.
+    total_equity_dollars is None if not reported.
     """
     fin = fetch_latest_financials(cert_id)
     print(f"[fdic_bank] Calibrating to {fin.get('NAME')} (CERT {cert_id}), as of {fin.get('REPDTE')}")
@@ -89,7 +90,7 @@ def calibrate_buckets_to_bank(buckets, cert_id):
     real_dep_d = real_dep * 1000
     real_asset_d = real_asset * 1000
 
-    out = copy.deepcopy(buckets)
+    out = copy.deepcopy(positions)
 
     loan_types = {"C&I loans (variable)", "CRE loans (fixed)", "Residential mortgage", "Consumer / other loans"}
     synth_loans = sum(b.balance for b in out if b.name in loan_types)
@@ -102,22 +103,39 @@ def calibrate_buckets_to_bank(buckets, cert_id):
     dep_scale = (real_dep_d / synth_dep) if (real_dep_d and synth_dep) else 1.0
     other_asset_scale = (real_asset_d / synth_asset) if (real_asset_d and synth_asset) else loan_scale
 
-    real_loan_yield = (real_int_inc / real_loans_d) if real_loans_d else None
-    real_cost_of_funds = (real_int_exp / real_dep_d) if real_dep_d else None
-
     for b in out:
         if b.name in loan_types:
             b.balance *= loan_scale
-            if real_loan_yield:
-                b.rate = max(0.0, b.rate * 0.4 + real_loan_yield * 0.6)  # blend synthetic shape with real yield
         elif "securities" in b.name.lower():
             b.balance *= sec_scale
         elif b.side == "liability" and ("borrowing" not in b.name.lower() and "debt" not in b.name.lower()):
             b.balance *= dep_scale
-            if real_cost_of_funds:
-                b.rate = max(0.0, b.rate * 0.4 + real_cost_of_funds * 0.6)
         elif b.side == "asset":
             b.balance *= other_asset_scale
+
+    # FDIC's public summary financials only give aggregate INTINC/EINTEXP, not a
+    # per-loan-type yield or per-deposit-type cost - so there's no real data to blend
+    # into individual bucket rates (an earlier version tried to anyway, by dividing
+    # total interest income by loan balances alone, and total interest expense by
+    # deposit balances alone - overstating both, since INTINC also includes securities/
+    # fed-funds income and EINTEXP also includes borrowings expense). The only real,
+    # calibratable signal available is the aggregate: total day-0 income/expense should
+    # match what the bank actually reported, since every scenario/gap/EVE/EaR number
+    # downstream is a *delta* off this starting point. Rescale all asset rates (and
+    # separately all liability rates) by one multiplicative factor each, preserving the
+    # relative pricing shape from config.py while forcing the aggregate day-0 NIM to match.
+    implied_ii = sum(b.balance * b.rate for b in out if b.side == "asset")
+    implied_ie = sum(b.balance * b.rate for b in out if b.side == "liability")
+    if real_int_inc and implied_ii:
+        income_scale = real_int_inc / implied_ii
+        for b in out:
+            if b.side == "asset":
+                b.rate *= income_scale
+    if real_int_exp and implied_ie:
+        expense_scale = real_int_exp / implied_ie
+        for b in out:
+            if b.side == "liability":
+                b.rate *= expense_scale
 
     reported_nim = float(fin["NIMY"]) / 100 if fin.get("NIMY") not in (None, "") else None
     if reported_nim:

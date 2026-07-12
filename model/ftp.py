@@ -47,7 +47,7 @@ def _ftp_spread_for_tenor(tenor_years):
 
 def compute_ftp_pnl(buckets, bucket_detail_df, benchmark_path, benchmark_rate_for_tenors):
     """
-    buckets: list of config.Bucket for this scenario run.
+    buckets: list of core.position.Position for this scenario run.
     bucket_detail_df: one scenario's detail_df from model.engine.run_scenario
                        (columns: month, bucket, side, balance, rate, interest).
     benchmark_path: this scenario's monthly benchmark rate array.

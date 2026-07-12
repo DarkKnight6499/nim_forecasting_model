@@ -1,5 +1,5 @@
 """
-Standard bank treasury / ALCO reports, built on top of the same bucket
+Standard bank treasury / ALCO reports, built on top of the same position
 assumptions used by the dynamic NIM engine (model/engine.py), but as
 point-in-time *static* analyses - the classic complement to a dynamic
 simulation in any ALM toolkit:
@@ -7,7 +7,7 @@ simulation in any ALM toolkit:
   - Interest Rate Sensitivity Gap: how much of the book reprices in each
     time band (RSA vs RSL), and the resulting gap / cumulative gap.
   - Duration Gap & EVE sensitivity: economic (mark-to-market) value impact
-    of rate shocks, using effective duration per bucket.
+    of rate shocks, using effective duration per position.
   - Structural Liquidity Statement: the same time-banded cashflow turnover,
     read as a liquidity (funding) gap rather than a repricing gap.
   - Earnings-at-Risk (EaR): NII impact over a horizon under each rate
@@ -18,6 +18,11 @@ All of these are *point-in-time* snapshots of the current balance sheet
 liquidity reports characterize risk in the book today, while the dynamic
 engine in model/engine.py projects NII forward with growth and behavioral
 repricing. Real ALCO packs carry both.
+
+The gap and liquidity schedules themselves live on core.position.Position
+(repricing_schedule / cashflow_schedule) rather than here, so every report
+(gap, liquidity, duration/EVE via bucket_effective_duration, and FTP tenor
+assignment in model/ftp.py) reads the same source of truth per position.
 """
 
 import numpy as np
@@ -26,82 +31,14 @@ import pandas as pd
 import config
 
 
-def _repricing_schedule(bucket, max_months=config.ALM_MAX_MONTHS):
-    """
-    Dollar amount of `bucket`'s current balance that reprices/matures in each
-    month 0..max_months-1, plus a `leftover` still un-repriced beyond that
-    horizon (the ">5Y" bucket). Static (no growth) - a point-in-time view.
-    """
-    schedule = np.zeros(max_months)
-
-    if bucket.category_type == "variable":
-        schedule[0] = bucket.balance
-
-    elif bucket.category_type == "administered":
-        # The whole balance's *rate* resets at once, `lag_months` out - matches
-        # the lagged-delta mechanics in model/engine.py's administered branch.
-        idx = min(bucket.lag_months, max_months - 1)
-        schedule[idx] += bucket.balance
-
-    elif bucket.category_type == "fixed_amortizing":
-        cpr_m = 1 - (1 - bucket.cpr_annual) ** (1 / 12) if bucket.cpr_annual > 0 else 0.0
-        remaining = bucket.balance
-        for t in range(max_months):
-            runoff = remaining * cpr_m
-            schedule[t] = runoff
-            remaining -= runoff
-
-    elif bucket.category_type == "laddered":
-        n = min(bucket.ladder_months, max_months)
-        piece = bucket.balance / bucket.ladder_months
-        for t in range(n):
-            schedule[t] = piece
-
-    else:
-        raise ValueError(f"Unknown category_type: {bucket.category_type}")
-
-    leftover = max(0.0, bucket.balance - schedule.sum())
-    return schedule, leftover
-
-
-def _liquidity_schedule(bucket, max_months=config.ALM_MAX_MONTHS):
-    """
-    Cash-flow/funding schedule for the *liquidity* view - distinct from
-    `_repricing_schedule` because for non-maturity deposits (administered:
-    NOW, savings, MMDA), a rate reset is not a cash outflow. Those balances
-    don't have a contractual maturity; what actually runs off is core-deposit
-    attrition, typically modeled far slower than the repricing lag. Every
-    other category_type already has genuine cashflow timing (loan paydowns,
-    security/CD/borrowing maturities), so it reuses the repricing schedule.
-    """
-    if bucket.category_type != "administered":
-        return _repricing_schedule(bucket, max_months)
-
-    decay = bucket.liquidity_decay_annual
-    if decay is None:
-        # No core-deposit decay assumption given - fall back to repricing timing,
-        # but this will overstate near-term outflows for non-maturity deposits.
-        return _repricing_schedule(bucket, max_months)
-
-    decay_m = 1 - (1 - decay) ** (1 / 12)
-    schedule = np.zeros(max_months)
-    remaining = bucket.balance
-    for t in range(max_months):
-        runoff = remaining * decay_m
-        schedule[t] = runoff
-        remaining -= runoff
-    leftover = max(0.0, bucket.balance - schedule.sum())
-    return schedule, leftover
-
-
-def _band_table(buckets, schedule_fn, max_months=config.ALM_MAX_MONTHS, bands=None, asset_col="RSA", liab_col="RSL"):
+def _band_table(positions, schedule_method, max_months=config.ALM_MAX_MONTHS, bands=None, asset_col="RSA", liab_col="RSL"):
     bands = bands or config.ALM_TIME_BANDS
     band_names = [b[0] for b in bands] + [">5Y"]
     totals = {name: {asset_col: 0.0, liab_col: 0.0} for name in band_names}
 
-    for b in buckets:
-        schedule, leftover = schedule_fn(b, max_months)
-        col = asset_col if b.side == "asset" else liab_col
+    for p in positions:
+        schedule, leftover = getattr(p, schedule_method)(max_months)
+        col = asset_col if p.side == "asset" else liab_col
         for name, lo, hi in bands:
             totals[name][col] += schedule[lo:hi].sum()
         totals[">5Y"][col] += leftover
@@ -118,20 +55,20 @@ def _band_table(buckets, schedule_fn, max_months=config.ALM_MAX_MONTHS, bands=No
     return pd.DataFrame(rows)
 
 
-def compute_rate_sensitivity_gap(buckets):
+def compute_rate_sensitivity_gap(positions):
     """RSA/RSL by repricing time band, gap, cumulative gap, gap ratio."""
-    return _band_table(buckets, _repricing_schedule, asset_col="RSA", liab_col="RSL")
+    return _band_table(positions, "repricing_schedule", asset_col="RSA", liab_col="RSL")
 
 
-def compute_structural_liquidity(buckets, total_assets):
+def compute_structural_liquidity(positions, total_assets):
     """
     Time-banded funding/liquidity gap: inflows (assets maturing/paying down =
     cash available) vs outflows (liabilities maturing or, for core deposits,
-    attriting = funding that must be replaced). Uses `_liquidity_schedule`,
+    attriting = funding that must be replaced). Uses Position.cashflow_schedule,
     which treats non-maturity deposits by their core-deposit decay assumption
     rather than their (much faster) rate-repricing timing.
     """
-    df = _band_table(buckets, _liquidity_schedule, asset_col="inflows", liab_col="outflows")
+    df = _band_table(positions, "cashflow_schedule", asset_col="inflows", liab_col="outflows")
     df = df.rename(columns={"gap": "net_gap", "cumulative_gap": "cumulative_net_gap", "gap_ratio": "inflow_outflow_ratio"})
     df["cumulative_gap_pct_assets"] = df["cumulative_net_gap"] / total_assets
     df["breaches_tolerance"] = df["cumulative_gap_pct_assets"] < config.LIQUIDITY_GAP_TOLERANCE_PCT_ASSETS
@@ -143,8 +80,8 @@ def bucket_effective_duration(bucket, benchmark_rate):
     if bucket.category_type == "variable":
         return 1 / 12
     if bucket.category_type == "administered":
-        if bucket.duration_years is not None:
-            return bucket.duration_years
+        if bucket.behavioral_duration_years is not None:
+            return bucket.behavioral_duration_years
         return max(bucket.lag_months / 12, 1 / 12)
     if bucket.category_type == "fixed_amortizing":
         avg_life = (1 / bucket.cpr_annual) if bucket.cpr_annual > 0 else 30.0

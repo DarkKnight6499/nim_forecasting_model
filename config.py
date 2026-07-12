@@ -1,115 +1,54 @@
 """
-Default assumptions for the NIM forecasting model.
+Default assumptions for the NIM/ALM model.
 
-This is the single place to edit when you want to swap in your own bank's
-numbers. If DATA_SOURCE="fdic", the balance sheet below is only used as a
-fallback (if the FDIC pull fails); if DATA_SOURCE="synthetic", it's used as-is.
+The balance sheet itself lives in `balance_sheet.yaml` (loaded via
+`core.balance_sheet.load_positions`), not here - this module holds the
+model-wide assumptions that apply across the whole balance sheet: the base
+curve, rate scenarios, ALM reporting bands, and the FTP policy curve.
 """
 
-from dataclasses import dataclass, field
-from typing import Optional
+from curve import shocks
 
+# ---------------------------------------------------------------------------
+# Base yield curve
+# ---------------------------------------------------------------------------
 
-@dataclass
-class Bucket:
-    name: str
-    side: str              # "asset" or "liability"
-    category_type: str     # "variable" | "fixed_amortizing" | "laddered" | "administered"
-    balance: float          # starting balance, $
-    rate: float              # starting annualized rate, decimal (e.g. 0.065)
-    beta: float = 1.0        # repricing sensitivity to benchmark rate moves
-    lag_months: int = 0       # administered-rate repricing lag
-    spread: float = 0.0        # spread to benchmark used when pricing new/renewed volume
-    cpr_annual: float = 0.0     # constant prepayment/runoff rate (fixed_amortizing)
-    ladder_months: int = 12      # average maturity, for laddered buckets
-    growth_rate_annual: float = 0.0  # net organic balance growth (on top of decay/roll)
-    rate_floor: Optional[float] = None
-    duration_years: Optional[float] = None  # behavioral effective duration override (administered buckets)
-    liquidity_decay_annual: Optional[float] = None  # core-deposit attrition rate for liquidity view (administered buckets)
-    reset_frequency_months: int = 1  # variable buckets: months between rate resets (e.g. 3 = quarterly reset, RLLR/MCLR-style). 1 = reprices every month.
-    seasonal: bool = False  # if True, growth is multiplied by SEASONALITY_INDEX_DEPOSITS each month
-
-
-# Reference/benchmark rate the whole book reprices off (proxy: effective Fed Funds).
-# Overwritten by data_sources/fred_rates.py if a FRED API key is available.
+# Anchor for the short end when no FRED key is available (proxy: effective Fed Funds).
 STARTING_BENCHMARK_RATE = 0.0425  # 4.25%
 
-# ---------------------------------------------------------------------------
-# Synthetic mid-size commercial bank (~$5B earning assets), calibrated to
-# ballpark ratios from FDIC Quarterly Banking Profile peer-group averages for
-# banks in the $1B-$10B asset tier. Replace via data_sources/fdic_bank.py for
-# a real institution (pass its FDIC certificate number).
-# ---------------------------------------------------------------------------
-DEFAULT_BUCKETS = [
-    # ---- Earning assets ----
-    Bucket("Fed funds sold / IB bank balances", "asset", "variable",
-           balance=150_000_000, rate=0.0425, beta=1.00, spread=0.00, growth_rate_annual=0.00),
-    Bucket("Investment securities", "asset", "laddered",
-           balance=900_000_000, rate=0.0375, spread=0.0050, ladder_months=60, growth_rate_annual=0.02),
-    # Quarterly reset (reset_frequency_months=3) - mirrors external-benchmark-linked floating
-    # loans that reset on a fixed cadence (e.g. RLLR/MCLR-style 3-month reset) rather than
-    # continuously; the rate is flat between reset dates, then jumps to catch up.
-    Bucket("C&I loans (variable)", "asset", "variable",
-           balance=1_100_000_000, rate=0.0750, beta=0.90, spread=0.0225, growth_rate_annual=0.04,
-           rate_floor=0.03, reset_frequency_months=3),
-    Bucket("CRE loans (fixed)", "asset", "fixed_amortizing",
-           balance=1_600_000_000, rate=0.0625, spread=0.0200, cpr_annual=0.12, growth_rate_annual=0.03),
-    Bucket("Residential mortgage", "asset", "fixed_amortizing",
-           balance=700_000_000, rate=0.0575, spread=0.0150, cpr_annual=0.10, growth_rate_annual=0.01),
-    Bucket("Consumer / other loans", "asset", "fixed_amortizing",
-           balance=250_000_000, rate=0.0850, spread=0.0350, cpr_annual=0.20, growth_rate_annual=0.02),
+# Illustrative upward-sloping fallback curve shape, used if the live Treasury
+# daily par yield curve fetch fails. Re-anchored at runtime so its short end
+# matches STARTING_BENCHMARK_RATE (or a FRED-sourced anchor) - see
+# data_sources/treasury_curve.py:get_base_curve.
+FALLBACK_CURVE_TENORS = [1 / 12, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]
+FALLBACK_CURVE_RATES = [0.0425, 0.0420, 0.0405, 0.0385, 0.0375, 0.0380, 0.0400, 0.0430]
 
-    # ---- Interest-bearing liabilities ----
-    # NOW/Savings/MMDA reprice (their coupon can change) almost immediately, but two other
-    # behavioral assumptions apply on top of that repricing mechanic, and matter for
-    # different reports:
-    #   duration_years         - effective EVE duration; long, because balances are sticky.
-    #   liquidity_decay_annual - core-deposit attrition/runoff rate; these are non-maturity
-    #                            deposits, so a rate reset is NOT a cash outflow - only actual
-    #                            balance attrition is. Used by the structural liquidity view,
-    #                            never by the repricing gap (see model/alm_reports.py).
-    #
-    # Each CASA-style product is further split into "core" (stable, seasonally-patterned,
-    # sticky - long duration, slow decay) and "non-core" (volatile/rate-shopped balances -
-    # short duration, fast decay). This is standard non-maturity-deposit (NMD) behavioral
-    # modeling: the core/non-core split (not just a single blended balance) is what actually
-    # drives EVE duration and liquidity decay in practice. `seasonal=True` applies
-    # SEASONALITY_INDEX_DEPOSITS to that bucket's monthly growth.
-    Bucket("NOW - Core", "liability", "administered",
-           balance=420_000_000, rate=0.0090, beta=0.15, lag_months=3, growth_rate_annual=0.02,
-           duration_years=3.5, liquidity_decay_annual=0.02, seasonal=True),
-    Bucket("NOW - Non-Core", "liability", "administered",
-           balance=180_000_000, rate=0.0120, beta=0.40, lag_months=1, growth_rate_annual=0.01,
-           duration_years=0.5, liquidity_decay_annual=0.25, seasonal=True),
-    Bucket("Savings & MMDA - Core", "liability", "administered",
-           balance=780_000_000, rate=0.0200, beta=0.30, lag_months=2, growth_rate_annual=0.03,
-           duration_years=2.5, liquidity_decay_annual=0.05, seasonal=True),
-    Bucket("Savings & MMDA - Non-Core", "liability", "administered",
-           balance=520_000_000, rate=0.0260, beta=0.65, lag_months=1, growth_rate_annual=0.02,
-           duration_years=0.4, liquidity_decay_annual=0.35, seasonal=True),
-    Bucket("Time deposits (CDs)", "liability", "laddered",
-           balance=900_000_000, rate=0.0400, spread=-0.0010, ladder_months=14, growth_rate_annual=0.02),
-    Bucket("Short-term borrowings (repo/FHLB)", "liability", "variable",
-           balance=200_000_000, rate=0.0450, beta=0.95, spread=0.0010, growth_rate_annual=0.00),
-    Bucket("Long-term FHLB / sub debt", "liability", "laddered",
-           balance=300_000_000, rate=0.0475, spread=0.0075, ladder_months=36, growth_rate_annual=0.00),
-]
+HORIZON_MONTHS = 24
+
+# Each scenario is a curve shift function (tenor_years -> decimal shift), not a
+# flat scalar - this is what makes non-parallel scenarios possible. See
+# curve/shocks.py for steepener/flattener/twist/custom builders.
+RATE_SCENARIOS = {
+    "Base (flat)": shocks.parallel(0),
+    "+100 bps": shocks.parallel(100),
+    "+200 bps": shocks.parallel(200),
+    "-100 bps": shocks.parallel(-100),
+    "-200 bps": shocks.parallel(-200),
+}
+RAMP_MONTHS = 12  # scenario shock is ramped in linearly over this many months
+
+# ---------------------------------------------------------------------------
+# Balance sheet identity (see core/engine.py)
+# ---------------------------------------------------------------------------
+
+# Fraction of each month's net interest income retained into equity (vs paid
+# out as dividends). 1.0 = fully retained.
+RETENTION_RATIO = 1.0
 
 # Memo only - non-interest-bearing DDA. Doesn't touch the NIM calc directly but
 # useful context for total funding mix / cost-of-funds reporting.
 NONINTEREST_DDA_BALANCE = 700_000_000
 NONINTEREST_DDA_GROWTH_ANNUAL = 0.015
-
-HORIZON_MONTHS = 24
-
-RATE_SCENARIOS = {
-    "Base (flat)":     0.0,
-    "+100 bps":        0.0100,
-    "+200 bps":        0.0200,
-    "-100 bps":       -0.0100,
-    "-200 bps":       -0.0200,
-}
-RAMP_MONTHS = 12  # scenario shock is ramped in linearly over this many months
 
 # ---------------------------------------------------------------------------
 # ALM report assumptions (rate sensitivity gap, duration/EVE, structural
@@ -161,7 +100,9 @@ SEASONALITY_INDEX_DEPOSITS = [
 # real matched-maturity FTP methodology).
 #
 # This spread curve is a simplified stand-in for a real OIS/swap-curve-implied
-# forward curve; tune it to reflect your own funding curve.
+# forward curve; tune it to reflect your own funding curve. A future iteration
+# should replace the floating-rate mechanic here with true origination-locked
+# matched-maturity FTP.
 # ---------------------------------------------------------------------------
 FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
     0.08: 0.0000,   # ~1 month

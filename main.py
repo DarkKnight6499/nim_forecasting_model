@@ -19,14 +19,15 @@ Examples:
 """
 
 import argparse
-import os
 from pathlib import Path
 
 import pandas as pd
 
 import config
-from data_sources import fred_rates, fdic_bank
-from model import scenarios, engine, alm_reports, ftp
+from curve import scenarios as curve_scenarios
+from core import balance_sheet
+from data_sources import fred_rates, fdic_bank, treasury_curve
+from model import engine, alm_reports, ftp
 from reporting import charts, export
 
 
@@ -52,11 +53,11 @@ def main():
         print("\nRe-run with --bank-cert <CERT> to calibrate the model to one of these.")
         return
 
-    buckets = config.DEFAULT_BUCKETS
+    positions = balance_sheet.load_positions()
     total_equity = None
     if args.bank_cert:
         try:
-            buckets, total_equity = fdic_bank.calibrate_buckets_to_bank(buckets, args.bank_cert)
+            positions, total_equity = fdic_bank.calibrate_positions_to_bank(positions, args.bank_cert)
         except Exception as e:
             print(f"[main] FDIC calibration failed ({e}); falling back to synthetic balance sheet.")
 
@@ -68,11 +69,23 @@ def main():
     else:
         print(f"[main] Using fallback benchmark rate: {benchmark_rate:.2%}")
 
-    scenario_paths = scenarios.build_all_scenarios(
-        benchmark_rate, config.RATE_SCENARIOS, args.months, config.RAMP_MONTHS
+    base_curve, curve_source = treasury_curve.get_base_curve(
+        benchmark_rate, config.FALLBACK_CURVE_TENORS, config.FALLBACK_CURVE_RATES
     )
+    print(f"[main] Base yield curve: {curve_source} "
+          f"(1M={base_curve.spot(1/12):.2%}, 2Y={base_curve.spot(2):.2%}, 10Y={base_curve.spot(10):.2%})")
 
-    combined_summary, details_by_scenario = engine.run_all_scenarios(buckets, scenario_paths)
+    curve_paths = curve_scenarios.build_curve_scenarios(
+        base_curve, config.RATE_SCENARIOS, args.months, config.RAMP_MONTHS
+    )
+    # The dynamic engine and FTP still consume a scalar benchmark-rate path (a
+    # temporary bridge); a future cohort-based engine should read the full curve
+    # directly (per-tenor pricing for new production, etc).
+    scalar_paths = {label: path.short_rate_array() for label, path in curve_paths.items()}
+
+    combined_summary, details_by_scenario = engine.run_all_scenarios(
+        positions, scalar_paths, initial_equity=total_equity
+    )
 
     print("\n=== NIM by scenario (annualized) ===")
     pivot = combined_summary.pivot(index="month", columns="scenario", values="nim") * 100
@@ -100,18 +113,24 @@ def main():
     print(sensitivity_df.to_string(index=False))
 
     # ---------------- ALM suite: gap, duration/EVE, liquidity, EaR ----------------
-    gap_df = alm_reports.compute_rate_sensitivity_gap(buckets)
+    gap_df = alm_reports.compute_rate_sensitivity_gap(positions)
     print("\n=== Interest Rate Sensitivity Gap (repricing, $) ===")
     print(gap_df.round(0).to_string(index=False))
 
-    total_assets_now = sum(b.balance for b in buckets if b.side == "asset")
-    liquidity_df = alm_reports.compute_structural_liquidity(buckets, total_assets_now)
+    total_assets_now = sum(p.balance for p in positions if p.side == "asset")
+    liquidity_df = alm_reports.compute_structural_liquidity(positions, total_assets_now)
     print("\n=== Structural Liquidity Statement (cumulative gap % of assets) ===")
     print(liquidity_df[["band", "inflows", "outflows", "net_gap", "cumulative_gap_pct_assets", "breaches_tolerance"]]
           .round(4).to_string(index=False))
 
+    # EVE still uses a linear duration approximation (a future iteration should move
+    # to full curve-aware revaluation); its shock scenarios are the flat-shift
+    # magnitude of each curve scenario's shift function (exact for the parallel
+    # scenarios that ship by default, an approximation for any non-parallel
+    # scenario added later).
+    shock_scenarios_scalar = {label: shift_fn(1.0) for label, shift_fn in config.RATE_SCENARIOS.items()}
     duration_df, duration_summary, eve_df = alm_reports.compute_duration_gap(
-        buckets, benchmark_rate, config.RATE_SCENARIOS, total_equity=total_equity
+        positions, benchmark_rate, shock_scenarios_scalar, total_equity=total_equity
     )
     print(f"\n=== Duration Gap === "
           f"D(assets)={duration_summary['duration_assets_years']:.2f}y  "
@@ -129,7 +148,7 @@ def main():
 
     # ---------------- FTP / ALM desk P&L ----------------
     ftp_detail_df, ftp_monthly_df = ftp.compute_ftp_pnl(
-        buckets, details_by_scenario[base_label], scenario_paths[base_label], benchmark_rate
+        positions, details_by_scenario[base_label], scalar_paths[base_label], benchmark_rate
     )
     max_err = ftp_monthly_df["identity_check"].abs().max()
     print(f"\n=== FTP / ALM Desk P&L (base scenario) === "
@@ -141,8 +160,8 @@ def main():
     # ALM desk P&L stability across rate scenarios - this is what a real FTP policy
     # review checks (see README): a well-calibrated FTP curve keeps this roughly flat.
     print("\n=== ALM Desk P&L stability across rate scenarios (month 0 vs end of horizon) ===")
-    for label, path in scenario_paths.items():
-        _, monthly = ftp.compute_ftp_pnl(buckets, details_by_scenario[label], path, benchmark_rate)
+    for label, path in scalar_paths.items():
+        _, monthly = ftp.compute_ftp_pnl(positions, details_by_scenario[label], path, benchmark_rate)
         start_pnl = monthly.loc[monthly["month"] == 0, "alm_desk_pnl"].iloc[0]
         end_pnl = monthly.loc[monthly["month"] == monthly["month"].max(), "alm_desk_pnl"].iloc[0]
         print(f"  {label:>12}: month 0 = ${start_pnl:,.0f}/mo   ->   final month = ${end_pnl:,.0f}/mo")
