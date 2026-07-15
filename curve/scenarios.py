@@ -1,10 +1,7 @@
 """
 Builds a monthly sequence of YieldCurve objects for each rate scenario: the
-shock (a curve shift function) ramps in linearly over `ramp_months` (mirrors
-how the Fed/market typically moves - gradually, not in one jump), then holds
-at full strength for the rest of the horizon. Same ramp convention as the
-pre-Phase-0 scalar model, just applied as a curve transform instead of one
-overnight number.
+shock ramps in linearly over `ramp_months`, then holds at full strength for
+the rest of the horizon.
 """
 
 from curve.yield_curve import YieldCurve

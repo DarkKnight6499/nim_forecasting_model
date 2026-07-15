@@ -45,6 +45,22 @@ RAMP_MONTHS = 12  # scenario shock is ramped in linearly over this many months
 # out as dividends). 1.0 = fully retained.
 RETENTION_RATIO = 1.0
 
+# ---------------------------------------------------------------------------
+# Rate indices (see core/indices.py)
+# ---------------------------------------------------------------------------
+
+# MCLR = MCLR_DEPOSIT_WEIGHT * deposit cost + (1 - MCLR_DEPOSIT_WEIGHT) *
+# borrowing cost + MCLR_EQUITY_SPREAD. See core/indices.py::compute_mclr.
+MCLR_DEPOSIT_WEIGHT = 0.7
+MCLR_EQUITY_SPREAD = 0.0025
+
+# Basis spread between a 3-month T-bill and the OIS/benchmark curve at the
+# same tenor (T-bills typically yield a bit below OIS-implied rates).
+TBILL_OIS_BASIS_SPREAD = -0.0005
+
+# Cap on rate-dependent effective CPR for amortizing assets (refi burnout).
+CPR_MAX_DEFAULT = 0.40
+
 # Memo only - non-interest-bearing DDA. Doesn't touch the NIM calc directly but
 # useful context for total funding mix / cost-of-funds reporting.
 NONINTEREST_DDA_BALANCE = 700_000_000
@@ -55,9 +71,7 @@ NONINTEREST_DDA_GROWTH_ANNUAL = 0.015
 # liquidity, earnings-at-risk) - see model/alm_reports.py
 # ---------------------------------------------------------------------------
 
-# Fallback total equity capital, used for EVE-as-%-of-capital when a real
-# bank's reported equity isn't available (synthetic balance sheet run).
-# ~10% of earning assets, a typical well-capitalized community bank ratio.
+# Fallback total equity, used when a real bank's reported equity isn't available.
 EQUITY_CAPITAL_FALLBACK = 470_000_000
 
 # Static gap/liquidity reports bucket repricing/maturity cashflows into these
@@ -72,17 +86,12 @@ ALM_TIME_BANDS = [
 ]
 ALM_MAX_MONTHS = 60  # anything not repriced/matured by here falls into the ">5Y" band
 
-# Illustrative internal policy limit: cumulative liquidity gap shouldn't go more
-# negative than this, as a fraction of total assets, within the near-term bands.
-# (Real banks set this via internal ALCO policy / regulatory guidance - this is
-# a reasonable illustrative threshold, not a specific regulatory citation.)
+# Cumulative liquidity gap tolerance, as a fraction of total assets.
 LIQUIDITY_GAP_TOLERANCE_PCT_ASSETS = -0.10
 
 # ---------------------------------------------------------------------------
-# Deposit seasonality - illustrative monthly index (Jan=index 0) applied to
-# growth_rate_annual for buckets with seasonal=True (the CASA buckets above).
-# A real bank derives this from time-series analysis of historical balances
-# by product; these are illustrative multipliers (e.g. Q4 inflows, Q1 dip).
+# Deposit seasonality - monthly index (Jan=index 0) applied to growth_rate_annual
+# for positions with seasonal=True.
 # ---------------------------------------------------------------------------
 SEASONALITY_INDEX_DEPOSITS = [
     1.00, 0.95, 0.95, 1.05, 1.05, 1.00,   # Jan-Jun
@@ -90,19 +99,9 @@ SEASONALITY_INDEX_DEPOSITS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Funds Transfer Pricing (FTP) curve - see model/ftp.py
-#
-# Matched-maturity FTP: each bucket is charged/credited a transfer rate =
-# benchmark rate (at that month) + a spread that increases with the bucket's
-# assigned tenor (its effective duration/average life - see
-# alm_reports.bucket_effective_duration, reused here so "the tenor a bucket
-# is FTP'd at" matches "the tenor used for its EVE duration", consistent with
-# real matched-maturity FTP methodology).
-#
-# This spread curve is a simplified stand-in for a real OIS/swap-curve-implied
-# forward curve; tune it to reflect your own funding curve. A future iteration
-# should replace the floating-rate mechanic here with true origination-locked
-# matched-maturity FTP.
+# FTP curve - see model/ftp.py. FTP rate = benchmark rate + spread, where the
+# spread is read off this table at the position's effective duration
+# (alm_reports.bucket_effective_duration).
 # ---------------------------------------------------------------------------
 FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
     0.08: 0.0000,   # ~1 month
@@ -115,8 +114,6 @@ FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
     10:   0.0080,
 }
 
-# Management overlay: a purely curve-implied FTP can price short-tenor funding too
-# low during an easing cycle (this happened in practice - see README); floor the
-# spread for tenors under this cutoff at this minimum.
+# Floors the FTP spread at FTP_SHORT_TENOR_MIN_SPREAD for tenors below this cutoff.
 FTP_SHORT_TENOR_CUTOFF_YEARS = 1.0
 FTP_SHORT_TENOR_MIN_SPREAD = 0.0010

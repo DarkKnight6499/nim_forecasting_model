@@ -12,10 +12,11 @@ statement, and earnings-at-risk.
    [core/balance_sheet.py](core/balance_sheet.py) into [core/position.py](core/position.py)
    `Position` objects) - each asset/liability line (loans, securities, deposits, borrowings)
    has a starting balance, rate, and a repricing behavior:
-   - `variable` - reprices with the benchmark rate x beta, on a fixed cadence
-     (`reset_frequency_months`; default 1 = every month). C&I loans use a 3-month reset,
-     mirroring external-benchmark-linked floating loans that reset quarterly rather than
-     continuously (e.g. RLLR/MCLR-style reset tenors) rather than one blanket "variable" bucket.
+   - `variable` - reprices off a rate index (see below), on a fixed cadence
+     (`reset_frequency_months`; default 1 = every month). A staggered book (e.g. C&I
+     loans on a 3-month reset) is split into that many cohorts by the engine, each due
+     to reset in a different month of the cycle, so roughly a third reprices every
+     month instead of the whole book jumping together every third month.
    - `administered` - bank-controlled rate, partial/lagged repricing (e.g. savings, MMDA).
      NOW and Savings/MMDA are each split into **core** (stable, seasonally-patterned, sticky -
      long `behavioral_duration_years`, slow `liquidity_decay_annual`) and **non-core**
@@ -25,10 +26,22 @@ statement, and earnings-at-risk.
      `repricing_schedule()` (drives the rate sensitivity gap) and a `cashflow_schedule()`
      (drives the structural liquidity statement) - deliberately different for non-maturity
      deposits, since a rate reset is not a cash outflow.
-   - `fixed_amortizing` - runs off via a constant prepayment rate (CPR); runoff + growth
-     is replaced by new production priced at benchmark + spread (e.g. CRE, mortgage, consumer loans)
-   - `laddered` - 1/N of the balance matures and renews each month at benchmark + spread
-     (e.g. securities, CDs, term debt)
+   - `fixed_amortizing` - held as vintage cohorts. Each existing cohort's rate is locked
+     for life (a real fixed-rate loan doesn't reprice mid-life); it runs off at a CPR
+     that speeds up the further its own coupon sits above the current new-production
+     rate (`refi_sensitivity`, capped at `cpr_max`) - the mortgage "burnout" effect.
+     Runoff plus growth becomes a new cohort priced at the current curve tenor + spread
+     (e.g. CRE, mortgage, consumer loans).
+   - `laddered` - 1/N of the balance matures and renews each month, priced at the
+     position's own curve tenor + spread (e.g. securities, CDs, term debt)
+
+   Rate indices ([core/indices.py](core/indices.py)): `SHORT` (curve spot at ~1 month),
+   `TENOR`/`FIXED` (curve spot at the position's own `origination_tenor_years`), `ADMIN`
+   (the bank-controlled lag/beta mechanic above), and `MCLR` - a backward-looking
+   marginal cost of funds computed *from the model's own liability side* each month
+   (weighted new deposit production cost + the current short-term borrowing rate, see
+   `core/indices.py::compute_mclr`), not an external benchmark. C&I loans are MCLR-linked
+   by default: the real liability-cost -> MCLR -> asset-pricing -> NIM chain.
 2. **Yield curve & rate scenarios** ([curve/](curve/)) - a full term structure
    (`curve/yield_curve.py`), not a single benchmark scalar: spot/forward rates,
    discount factors, and curve-shape shocks (`curve/shocks.py`: parallel, steepener,
@@ -37,8 +50,8 @@ statement, and earnings-at-risk.
    anchored at `config.STARTING_BENCHMARK_RATE` (optionally FRED-anchored) if the
    fetch fails. Scenarios (base/flat, ±100bps, ±200bps by default) ramp in linearly
    over 12 months (configurable) as curve transformations (`curve/scenarios.py`).
-3. **Dynamic engine** ([model/engine.py](model/engine.py)) - steps every position forward
-   month by month with growth, computes interest income/expense, and annualized
+3. **Dynamic engine** ([core/engine.py](core/engine.py)) - steps every position's cohorts
+   forward month by month with growth, computes interest income/expense, and annualized
    NIM = (interest income − interest expense) × 12 / avg earning assets. Enforces the
    balance sheet identity (assets = liabilities + equity) every month from month 1
    onward: one designated position (short-term borrowings) absorbs a funding
@@ -115,10 +128,12 @@ specific tenors) until desk P&L stays roughly neutral regardless of which way ra
 Call Report totals and shows a real ALM pattern: the repricing gap is *positive* in the 0-1 month
 band (short-term assets reprice fast) but sharply *negative* in the 1-12 month bands (NOW/MMDA/CD
 repricing lands there), then positive again beyond a year. That shape shows up directly in
-Earnings-at-Risk: a +100bps shock *helps* NII in months 1-6 (asset-sensitive near-term), crosses
-zero around month 11-12, and *hurts* NII from month 12 on (liability-sensitive medium-term) - see
-`outputs/earnings_at_risk.png`. This is exactly the kind of gap/EaR crossover real ALCOs watch for,
-and why a single-horizon EaR number can be misleading on its own.
+Earnings-at-Risk: a +100bps shock *helps* NII over the first few months (asset-sensitive near-term),
+crosses zero within roughly six months, and *hurts* NII from there on (liability-sensitive
+medium-term) - see `outputs/earnings_at_risk.png`. This is exactly the kind of gap/EaR crossover
+real ALCOs watch for, and why a single-horizon EaR number can be misleading on its own. (The exact
+crossover month shifts as the model's repricing mechanics get more realistic - it's the pattern
+that matters, not the specific month.)
 
 Caveat: the FDIC calibration only rescales *totals and blended yields* to match PNC's real numbers;
 the underlying mix (betas, CPRs, deposit duration/decay assumptions) is still the synthetic
@@ -138,4 +153,9 @@ see "Extending" below for how to tighten this up.
   not derived from the data.
 - For stochastic/Monte Carlo rate paths (vs. today's deterministic shock scenarios), replace
   `curve/scenarios.py`'s path builder with a short-rate model (e.g. Vasicek/CIR) sampled N times,
-  and run `model/engine.py` once per path to get a NIM distribution (and EaR/EVE distributions too).
+  and run `core/engine.py` once per path to get a NIM distribution (and EaR/EVE distributions too).
+- Tune the MCLR chain in `config.py` (`MCLR_DEPOSIT_WEIGHT`, `MCLR_EQUITY_SPREAD`) or flag more/fewer
+  liability positions `feeds_mclr_deposit_cost: true` in `balance_sheet.yaml` to change what counts
+  as the marginal cost of new deposit production.
+- Tune `refi_sensitivity` / `cpr_max` per `fixed_amortizing` position in `balance_sheet.yaml` to make
+  the prepayment burnout effect stronger/weaker, or add it to other amortizing books.

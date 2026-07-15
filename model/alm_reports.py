@@ -1,28 +1,17 @@
 """
-Standard bank treasury / ALCO reports, built on top of the same position
-assumptions used by the dynamic NIM engine (model/engine.py), but as
-point-in-time *static* analyses - the classic complement to a dynamic
-simulation in any ALM toolkit:
+Point-in-time (no growth) ALM reports on the current balance sheet:
 
-  - Interest Rate Sensitivity Gap: how much of the book reprices in each
-    time band (RSA vs RSL), and the resulting gap / cumulative gap.
-  - Duration Gap & EVE sensitivity: economic (mark-to-market) value impact
-    of rate shocks, using effective duration per position.
-  - Structural Liquidity Statement: the same time-banded cashflow turnover,
-    read as a liquidity (funding) gap rather than a repricing gap.
-  - Earnings-at-Risk (EaR): NII impact over a horizon under each rate
-    scenario, read straight off the dynamic engine's own output.
+  - Interest Rate Sensitivity Gap: RSA vs RSL by repricing time band, and
+    the resulting gap / cumulative gap.
+  - Duration Gap & EVE sensitivity: delta economic value of equity under
+    each instantaneous rate shock, using effective duration per position.
+  - Structural Liquidity Statement: same time bands, cashflow (not
+    repricing) turnover.
+  - Earnings-at-Risk (EaR): cumulative NII impact vs. base by horizon, read
+    from the dynamic engine's (core/engine.py) own monthly output.
 
-All of these are *point-in-time* snapshots of the current balance sheet
-(no growth applied) - that's standard ALM practice: static gap/duration/
-liquidity reports characterize risk in the book today, while the dynamic
-engine in model/engine.py projects NII forward with growth and behavioral
-repricing. Real ALCO packs carry both.
-
-The gap and liquidity schedules themselves live on core.position.Position
-(repricing_schedule / cashflow_schedule) rather than here, so every report
-(gap, liquidity, duration/EVE via bucket_effective_duration, and FTP tenor
-assignment in model/ftp.py) reads the same source of truth per position.
+Gap and liquidity schedules are computed by core.position.Position
+(repricing_schedule / cashflow_schedule).
 """
 
 import numpy as np
@@ -100,11 +89,9 @@ def compute_duration_gap(buckets, benchmark_rate, shock_scenarios, total_equity=
     summary_dict has weighted asset/liability duration and the duration gap:
         DGAP = D_assets - (Total Liabilities / Total Assets) * D_liabilities
 
-    eve_sensitivity_df: for each scenario's *instantaneous* shock (EVE analysis
-    conventionally uses an immediate shock, unlike the ramped NII simulation),
+    eve_sensitivity_df: for each scenario's instantaneous shock,
     Delta-EVE = -D_assets * Assets * shock - (-D_liab * Liabilities * shock),
-    reported in $ and as % of total equity (a standard EVE/capital risk metric;
-    a common regulatory rule of thumb flags >15% of capital at risk as high).
+    reported in $ and as % of total equity.
     """
     rows = []
     total_assets = total_liab = dv_assets = dv_liab = 0.0
@@ -144,14 +131,7 @@ def compute_duration_gap(buckets, benchmark_rate, shock_scenarios, total_equity=
 
 
 def compute_earnings_at_risk(combined_summary_df, base_label, horizons=(3, 6, 12, 24)):
-    """
-    NII impact vs. base under each scenario, at several cumulative horizons -
-    read straight off the dynamic engine's own monthly output. Multiple
-    horizons matter here: a bank can be asset-sensitive near-term (near-term
-    RSA > RSL) and liability-sensitive further out (as lagged/laddered
-    deposits catch up), so EaR can cross zero within the forecast window -
-    a single 12-month number can mask that crossover.
-    """
+    """Cumulative NII impact vs. base under each scenario, at several horizons."""
     max_month = int(combined_summary_df["month"].max())
     rows = []
     for horizon in horizons:

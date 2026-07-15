@@ -1,8 +1,6 @@
 """
 Curve shock builders: each returns a shift_fn(tenor_years) -> decimal shift,
-consumed by YieldCurve.shifted(). Expressing scenarios as curve transformations
-(instead of one scalar bps number) is what makes non-parallel scenarios
-(steepener/flattener/twist) possible.
+consumed by YieldCurve.shifted().
 """
 
 

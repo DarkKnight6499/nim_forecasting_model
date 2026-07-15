@@ -25,9 +25,9 @@ import pandas as pd
 
 import config
 from curve import scenarios as curve_scenarios
-from core import balance_sheet
+from core import balance_sheet, engine
 from data_sources import fred_rates, fdic_bank, treasury_curve
-from model import engine, alm_reports, ftp
+from model import alm_reports, ftp
 from reporting import charts, export
 
 
@@ -78,13 +78,12 @@ def main():
     curve_paths = curve_scenarios.build_curve_scenarios(
         base_curve, config.RATE_SCENARIOS, args.months, config.RAMP_MONTHS
     )
-    # The dynamic engine and FTP still consume a scalar benchmark-rate path (a
-    # temporary bridge); a future cohort-based engine should read the full curve
-    # directly (per-tenor pricing for new production, etc).
+    # model/ftp.py consumes a scalar benchmark-rate path; core/engine.py reads
+    # the full curve directly.
     scalar_paths = {label: path.short_rate_array() for label, path in curve_paths.items()}
 
     combined_summary, details_by_scenario = engine.run_all_scenarios(
-        positions, scalar_paths, initial_equity=total_equity
+        positions, curve_paths, initial_equity=total_equity
     )
 
     print("\n=== NIM by scenario (annualized) ===")
@@ -123,11 +122,8 @@ def main():
     print(liquidity_df[["band", "inflows", "outflows", "net_gap", "cumulative_gap_pct_assets", "breaches_tolerance"]]
           .round(4).to_string(index=False))
 
-    # EVE still uses a linear duration approximation (a future iteration should move
-    # to full curve-aware revaluation); its shock scenarios are the flat-shift
-    # magnitude of each curve scenario's shift function (exact for the parallel
-    # scenarios that ship by default, an approximation for any non-parallel
-    # scenario added later).
+    # EVE shock scenarios: flat-shift magnitude of each curve scenario's shift
+    # function, evaluated at tenor 1.0.
     shock_scenarios_scalar = {label: shift_fn(1.0) for label, shift_fn in config.RATE_SCENARIOS.items()}
     duration_df, duration_summary, eve_df = alm_reports.compute_duration_gap(
         positions, benchmark_rate, shock_scenarios_scalar, total_equity=total_equity

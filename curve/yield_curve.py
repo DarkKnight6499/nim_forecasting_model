@@ -1,10 +1,6 @@
 """
-A term structure of zero (spot) rates, with interpolation, implied-forward
-extraction, discount factors, and parallel/non-parallel shifting.
-
-Replaces the single overnight benchmark scalar used throughout the model
-before Phase 0: every rate in the book now reads off a point on a real
-curve (its own repricing/origination tenor) instead of one flat number.
+A term structure of zero (spot) rates: interpolation, implied-forward
+extraction, discount factors, and shifting.
 """
 
 import numpy as np

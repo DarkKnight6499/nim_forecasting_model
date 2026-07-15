@@ -1,9 +1,4 @@
-"""
-Loads the balance sheet from `balance_sheet.yaml` (contractual/behavioral
-assumptions as data) instead of the old hardcoded `config.DEFAULT_BUCKETS`
-Python list. This makes swapping in a different bank's book, or recalibrating
-one, a data-mapping problem rather than an in-code rescaling hack.
-"""
+"""Loads the balance sheet from `balance_sheet.yaml` into Position objects."""
 
 from pathlib import Path
 
@@ -32,10 +27,14 @@ def validate(positions: list) -> None:
     plugs = [p for p in positions if p.plug]
     if len(plugs) != 1:
         raise ValueError(f"Expected exactly one plug position, found {len(plugs)}")
+    if plugs[0].category_type != "variable":
+        raise ValueError("The plug position must be category_type 'variable' (the identity adjustment lands on a cohort)")
 
     sinks = [p for p in positions if p.cash_sink]
     if len(sinks) != 1:
         raise ValueError(f"Expected exactly one cash_sink position, found {len(sinks)}")
+    if sinks[0].category_type != "variable":
+        raise ValueError("The cash_sink position must be category_type 'variable' (the identity adjustment lands on a cohort)")
 
     for p in positions:
         if p.side not in ("asset", "liability"):

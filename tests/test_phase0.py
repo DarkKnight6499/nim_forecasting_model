@@ -14,7 +14,8 @@ from curve import shocks
 from curve.yield_curve import YieldCurve
 from curve.scenarios import build_curve_scenarios
 from core.balance_sheet import load_positions
-from model import engine, alm_reports
+from core import engine
+from model import alm_reports
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +133,8 @@ def test_balance_sheet_identity_holds_each_month():
     positions = load_positions()
     flat_curve = YieldCurve([1 / 12, 1.0, 10.0], [0.0425, 0.0425, 0.0425])
     paths = build_curve_scenarios(flat_curve, {"Base": shocks.parallel(0)}, horizon_months=24, ramp_months=12)
-    scalar_path = paths["Base"].short_rate_array()
 
-    summary_df, detail_df = engine.run_scenario(positions, scalar_path, scenario_label="Base")
+    summary_df, detail_df = engine.run_scenario(positions, paths["Base"], scenario_label="Base")
 
     for month in range(1, 24):
         month_detail = detail_df[detail_df["month"] == month]

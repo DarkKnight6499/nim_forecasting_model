@@ -2,18 +2,10 @@
 FDIC BankFind Suite API integration - public, no API key required.
 Docs: https://banks.data.fdic.gov/docs/
 
-Lets you pull a real bank's latest Call Report totals (assets, loans,
-securities, deposits, interest income/expense) and use them to calibrate
-the synthetic balance sheet's *shape* (relative mix and yields) to match
-that institution's actual scale and pricing.
-
-Caveat: the FDIC Call Report has much more granular category-level fields
-(C&I vs CRE vs residential loan splits, deposit-by-type, etc. - see the
-UBPR/SDI data dictionary) than what's pulled here. This module recalibrates
-at the aggregate level (total loans, total securities, total deposits, blended
-yields) and rescales the existing position mix proportionally. For a
-production-grade build, extend `FIELDS` with the specific Call Report
-schedule fields you need and map them 1:1 to positions instead of rescaling.
+Pulls a real bank's latest Call Report totals (assets, loans, securities,
+deposits, interest income/expense) and rescales the synthetic balance
+sheet's position mix and rates to match, at the aggregate level (FDIC's
+public summary financials don't break out per-category yields).
 """
 
 import copy
@@ -65,11 +57,9 @@ def fetch_latest_financials(cert_id):
 
 def calibrate_positions_to_bank(positions, cert_id):
     """
-    Rescales balances of `positions` (list of core.position.Position) to a real
-    bank's actual latest Call Report totals, and rescales rates so day-0
-    modeled income/expense match what that bank actually reports. Returns
-    (new_position_list, total_equity_dollars); does not mutate input.
-    total_equity_dollars is None if not reported.
+    Rescales `positions` balances and rates to a real bank's latest Call
+    Report. Returns (new_position_list, total_equity_dollars); does not
+    mutate input. total_equity_dollars is None if not reported.
     """
     fin = fetch_latest_financials(cert_id)
     print(f"[fdic_bank] Calibrating to {fin.get('NAME')} (CERT {cert_id}), as of {fin.get('REPDTE')}")
@@ -113,17 +103,8 @@ def calibrate_positions_to_bank(positions, cert_id):
         elif b.side == "asset":
             b.balance *= other_asset_scale
 
-    # FDIC's public summary financials only give aggregate INTINC/EINTEXP, not a
-    # per-loan-type yield or per-deposit-type cost - so there's no real data to blend
-    # into individual bucket rates (an earlier version tried to anyway, by dividing
-    # total interest income by loan balances alone, and total interest expense by
-    # deposit balances alone - overstating both, since INTINC also includes securities/
-    # fed-funds income and EINTEXP also includes borrowings expense). The only real,
-    # calibratable signal available is the aggregate: total day-0 income/expense should
-    # match what the bank actually reported, since every scenario/gap/EVE/EaR number
-    # downstream is a *delta* off this starting point. Rescale all asset rates (and
-    # separately all liability rates) by one multiplicative factor each, preserving the
-    # relative pricing shape from config.py while forcing the aggregate day-0 NIM to match.
+    # Rescale all asset rates (and separately all liability rates) by one factor each
+    # so day-0 modeled interest income/expense match the bank's reported totals.
     implied_ii = sum(b.balance * b.rate for b in out if b.side == "asset")
     implied_ie = sum(b.balance * b.rate for b in out if b.side == "liability")
     if real_int_inc and implied_ii:

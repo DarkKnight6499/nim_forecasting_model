@@ -1,0 +1,316 @@
+"""
+Cohort-based monthly balance-sheet / NIM simulation engine.
+
+Per-position state:
+  variable         - list of cohorts, one per reset-phase slot
+                     (reset_frequency_months cohorts). On its due month, a
+                     cohort's rate is set from its index (core/indices.py):
+                       MCLR: mclr(month) + spread.
+                       SHORT/TENOR/TBILL3M: day0_rate + beta * (index_now -
+                       index_at_cohort_creation).
+                     Growth is split evenly across phase-cohorts.
+  fixed_amortizing - list of vintage cohorts. Existing cohorts' rates are
+                     fixed; each runs off at
+                     min(cpr_max, cpr_annual + refi_sensitivity *
+                     max(0, cohort.rate - new_production_rate)). Runoff +
+                     growth forms a new cohort priced at
+                     index_rate(index, tenor_years) + spread.
+  administered     - single balance/rate state: rate = day0_rate +
+                     beta * (short_rate[t - lag_months] - short_rate[0]).
+  laddered         - single blended state: 1/ladder_months matures/renews
+                     each month at index_rate(index, tenor_years) + spread.
+
+MCLR is computed each month from liability positions flagged
+feeds_mclr_deposit_cost plus the plug position's current rate, before any
+MCLR-indexed position reprices that month.
+
+Balance sheet identity (assets = liabilities + equity) is enforced from
+month 1 onward: the `plug` position absorbs a funding shortfall, the
+`cash_sink` position absorbs a surplus. Both must be `variable` positions
+(core/balance_sheet.py validates this).
+"""
+
+import copy
+from dataclasses import dataclass
+
+import numpy as np
+import pandas as pd
+
+import config
+from core.indices import index_rate, compute_mclr
+
+
+def _monthly_from_annual_rate(annual_rate):
+    return 1 - (1 - annual_rate) ** (1 / 12) if annual_rate < 1 else annual_rate / 12
+
+
+@dataclass
+class Cohort:
+    balance: float
+    rate: float
+    day0_rate: float
+    day0_index_value: float
+    origination_month: int
+    phase: int = 0
+
+
+def _seed_cohorts(p, curve0):
+    if p.category_type == "variable":
+        n = max(1, p.reset_frequency_months)
+        piece = p.balance / n
+        idx0 = 0.0 if p.index == "MCLR" else index_rate(p.index, curve0, tenor_years=p.origination_tenor_years)
+        return [
+            Cohort(balance=piece, rate=p.rate, day0_rate=p.rate, day0_index_value=idx0,
+                   origination_month=0, phase=phase)
+            for phase in range(n)
+        ]
+    if p.category_type == "fixed_amortizing":
+        return [Cohort(balance=p.balance, rate=p.rate, day0_rate=p.rate, day0_index_value=0.0,
+                        origination_month=0, phase=0)]
+    return []
+
+
+def _aggregate_cohorts(cohorts):
+    balance = sum(c.balance for c in cohorts)
+    rate = (sum(c.balance * c.rate for c in cohorts) / balance) if balance else 0.0
+    return balance, rate
+
+
+def _step_variable_cohorts(p, cohorts, curve_t, t, mclr_t):
+    growth_m = p.growth_rate_annual / 12
+    if p.seasonal:
+        growth_m *= config.SEASONALITY_INDEX_DEPOSITS[t % 12]
+    total_growth = sum(c.balance for c in cohorts) * growth_m
+    per_cohort_growth = total_growth / len(cohorts)
+
+    for c in cohorts:
+        c.balance += per_cohort_growth
+        if t % p.reset_frequency_months == c.phase:
+            if p.index == "MCLR":
+                new_rate = mclr_t + p.spread
+            else:
+                idx_now = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years)
+                new_rate = c.day0_rate + p.beta * (idx_now - c.day0_index_value)
+            if p.rate_floor is not None:
+                new_rate = max(new_rate, p.rate_floor)
+            c.rate = max(new_rate, 0.0)
+
+
+def _step_fixed_amortizing_cohorts(p, cohorts, curve_t, t):
+    new_prod_rate = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
+    if p.rate_floor is not None:
+        new_prod_rate = max(new_prod_rate, p.rate_floor)
+
+    total_runoff = 0.0
+    for c in cohorts:
+        cpr_annual_eff = min(p.cpr_max, p.cpr_annual + p.refi_sensitivity * max(0.0, c.rate - new_prod_rate))
+        cpr_m = _monthly_from_annual_rate(cpr_annual_eff)
+        runoff = c.balance * cpr_m
+        c.balance -= runoff
+        total_runoff += runoff
+
+    total_balance = sum(c.balance for c in cohorts)
+    growth = total_balance * (p.growth_rate_annual / 12)
+    new_production = total_runoff + max(0.0, growth)
+    if new_production > 0:
+        cohorts.append(Cohort(balance=new_production, rate=new_prod_rate, day0_rate=new_prod_rate,
+                               day0_index_value=0.0, origination_month=t, phase=0))
+    cohorts[:] = [c for c in cohorts if c.balance > 1.0]
+
+
+def _step_administered(p, prev_balance, prev_rate, curve0, curve_lag, t):
+    delta = curve_lag.spot(1 / 12) - curve0.spot(1 / 12)
+    new_rate = p.rate + p.beta * delta
+    if p.rate_floor is not None:
+        new_rate = max(new_rate, p.rate_floor)
+    new_rate = max(new_rate, 0.0)
+    growth_m = p.growth_rate_annual / 12
+    if p.seasonal:
+        growth_m *= config.SEASONALITY_INDEX_DEPOSITS[t % 12]
+    new_balance = prev_balance * (1 + growth_m)
+    return new_balance, new_rate
+
+
+def _step_laddered(p, prev_balance, prev_rate, curve_t, t):
+    maturing = prev_balance / p.ladder_months
+    growth = prev_balance * (p.growth_rate_annual / 12)
+    renewed = maturing + max(0.0, growth)
+    new_rate_piece = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
+    if p.rate_floor is not None:
+        new_rate_piece = max(new_rate_piece, p.rate_floor)
+    surviving = prev_balance - maturing
+    new_balance = surviving + renewed
+    if new_balance <= 0:
+        return 0.0, new_rate_piece, renewed, new_rate_piece
+    blended_rate = (surviving * prev_rate + renewed * new_rate_piece) / new_balance
+    return new_balance, blended_rate, renewed, new_rate_piece
+
+
+def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, retention_ratio=None):
+    """
+    Simulates one rate scenario across all positions for len(curve_path) months.
+    Returns (monthly_summary_df, position_detail_df) - same schema as before.
+    """
+    horizon = len(curve_path.curves)
+    retention_ratio = config.RETENTION_RATIO if retention_ratio is None else retention_ratio
+
+    if initial_equity:
+        equity = initial_equity
+    else:
+        residual = sum(p.balance for p in positions if p.side == "asset") - \
+            sum(p.balance for p in positions if p.side == "liability")
+        equity = residual if residual > 0 else config.EQUITY_CAPITAL_FALLBACK
+
+    plug_name = next(p.name for p in positions if p.plug)
+    sink_name = next(p.name for p in positions if p.cash_sink)
+
+    curve0 = curve_path.curves[0]
+    admin_state = {p.name: {"balance": p.balance, "rate": p.rate} for p in positions if p.category_type == "administered"}
+    ladder_state = {p.name: {"balance": p.balance, "rate": p.rate} for p in positions if p.category_type == "laddered"}
+    cohort_state = {p.name: _seed_cohorts(p, curve0) for p in positions if p.category_type in ("variable", "fixed_amortizing")}
+
+    prev_total_balance = {p.name: p.balance for p in positions}
+
+    summary_rows = []
+    detail_rows = []
+    prev_period_nii = 0.0
+
+    for t in range(horizon):
+        if t > 0:
+            equity += retention_ratio * prev_period_nii
+
+        curve_t = curve_path.curves[t]
+        ladder_renewed = {}
+        ladder_new_rate = {}
+
+        if t > 0:
+            # Stage 1: administered + laddered liabilities (deposit-cost inputs for MCLR).
+            for p in positions:
+                if p.category_type == "administered":
+                    lag_idx = max(0, t - p.lag_months)
+                    nb, nr = _step_administered(p, admin_state[p.name]["balance"], admin_state[p.name]["rate"],
+                                                 curve0, curve_path.curves[lag_idx], t)
+                    admin_state[p.name] = {"balance": nb, "rate": nr}
+                elif p.category_type == "laddered":
+                    nb, nr, renewed, new_rate_piece = _step_laddered(
+                        p, ladder_state[p.name]["balance"], ladder_state[p.name]["rate"], curve_t, t)
+                    ladder_state[p.name] = {"balance": nb, "rate": nr}
+                    ladder_renewed[p.name] = renewed
+                    ladder_new_rate[p.name] = new_rate_piece
+
+            # Stage 2: variable positions not indexed to MCLR (this determines the
+            # current short-term borrowing rate MCLR needs).
+            for p in positions:
+                if p.category_type == "variable" and p.index != "MCLR":
+                    _step_variable_cohorts(p, cohort_state[p.name], curve_t, t, mclr_t=None)
+
+            # Stage 3: MCLR from positions flagged feeds_mclr_deposit_cost only
+            # (excludes low-beta core CASA, which would otherwise understate it).
+            deposit_balance = deposit_rate_x_balance = 0.0
+            for p in positions:
+                if p.side != "liability" or not p.feeds_mclr_deposit_cost:
+                    continue
+                if p.category_type == "administered":
+                    b, r = admin_state[p.name]["balance"], admin_state[p.name]["rate"]
+                    deposit_balance += b
+                    deposit_rate_x_balance += b * r
+                elif p.category_type == "laddered":
+                    renewed, new_rate_piece = ladder_renewed[p.name], ladder_new_rate[p.name]
+                    deposit_balance += renewed
+                    deposit_rate_x_balance += renewed * new_rate_piece
+            new_deposit_weighted_rate = (deposit_rate_x_balance / deposit_balance) if deposit_balance else None
+
+            borrowing_rate = None
+            for p in positions:
+                if p.plug:
+                    _, borrowing_rate = _aggregate_cohorts(cohort_state[p.name])
+
+            mclr = compute_mclr(new_deposit_weighted_rate, borrowing_rate, curve_t.spot(1 / 12))
+
+            # Stage 4: MCLR-indexed variable positions + fixed_amortizing assets.
+            for p in positions:
+                if p.category_type == "variable" and p.index == "MCLR":
+                    _step_variable_cohorts(p, cohort_state[p.name], curve_t, t, mclr_t=mclr)
+                elif p.category_type == "fixed_amortizing":
+                    _step_fixed_amortizing_cohorts(p, cohort_state[p.name], curve_t, t)
+
+        # Aggregate every position to (balance, rate) for this month.
+        new_balances, new_rates = {}, {}
+        for p in positions:
+            if p.category_type == "administered":
+                new_balances[p.name], new_rates[p.name] = admin_state[p.name]["balance"], admin_state[p.name]["rate"]
+            elif p.category_type == "laddered":
+                new_balances[p.name], new_rates[p.name] = ladder_state[p.name]["balance"], ladder_state[p.name]["rate"]
+            else:
+                new_balances[p.name], new_rates[p.name] = _aggregate_cohorts(cohort_state[p.name])
+
+        # Balance sheet identity (month 1+): plug/cash_sink are variable positions,
+        # so the adjustment lands directly on their cohort list, then re-aggregates.
+        if t > 0:
+            total_assets = sum(new_balances[p.name] for p in positions if p.side == "asset")
+            total_liab = sum(new_balances[p.name] for p in positions if p.side == "liability")
+            funding_gap = total_assets - total_liab - equity
+            adjust_name = plug_name if funding_gap >= 0 else sink_name
+            adjust_amount = funding_gap if funding_gap >= 0 else -funding_gap
+            cohort_state[adjust_name][0].balance += adjust_amount
+            new_balances[adjust_name], new_rates[adjust_name] = _aggregate_cohorts(cohort_state[adjust_name])
+
+        period_ii = period_ie = period_avg_earning_assets = 0.0
+
+        for p in positions:
+            prev_balance = prev_total_balance[p.name]
+            new_balance = new_balances[p.name]
+            new_rate = new_rates[p.name]
+
+            avg_balance = (prev_balance + new_balance) / 2 if t > 0 else prev_balance
+            monthly_interest = avg_balance * new_rate / 12
+
+            if p.side == "asset":
+                period_ii += monthly_interest
+                period_avg_earning_assets += avg_balance
+            else:
+                period_ie += monthly_interest
+
+            detail_rows.append({
+                "scenario": scenario_label, "month": t, "bucket": p.name, "side": p.side,
+                "balance": new_balance, "rate": new_rate, "interest": monthly_interest,
+            })
+            prev_total_balance[p.name] = new_balance
+
+        nim_annualized = (period_ii - period_ie) * 12 / period_avg_earning_assets if period_avg_earning_assets else np.nan
+        asset_yield = period_ii * 12 / period_avg_earning_assets if period_avg_earning_assets else np.nan
+        total_ib_liab = sum(new_balances[p.name] for p in positions if p.side == "liability")
+        cost_of_funds = period_ie * 12 / total_ib_liab if total_ib_liab else np.nan
+
+        summary_rows.append({
+            "scenario": scenario_label,
+            "month": t,
+            "benchmark_rate": curve_t.spot(1 / 12),
+            "interest_income": period_ii,
+            "interest_expense": period_ie,
+            "net_interest_income": period_ii - period_ie,
+            "avg_earning_assets": period_avg_earning_assets,
+            "yield_on_earning_assets": asset_yield,
+            "cost_of_ib_liabilities": cost_of_funds,
+            "net_interest_spread": asset_yield - cost_of_funds if pd.notna(asset_yield) and pd.notna(cost_of_funds) else np.nan,
+            "nim": nim_annualized,
+            "equity": equity,
+        })
+
+        prev_period_nii = period_ii - period_ie
+
+    return pd.DataFrame(summary_rows), pd.DataFrame(detail_rows)
+
+
+def run_all_scenarios(positions, curve_paths: dict, initial_equity=None, retention_ratio=None):
+    """curve_paths: {label: curve.scenarios.CurvePath}. Returns (combined_summary_df, {label: detail_df})."""
+    summaries = []
+    details = {}
+    for label, curve_path in curve_paths.items():
+        summary_df, detail_df = run_scenario(
+            copy.deepcopy(positions), curve_path, scenario_label=label,
+            initial_equity=initial_equity, retention_ratio=retention_ratio,
+        )
+        summaries.append(summary_df)
+        details[label] = detail_df
+    return pd.concat(summaries, ignore_index=True), details

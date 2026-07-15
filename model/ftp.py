@@ -1,31 +1,15 @@
 """
 Funds Transfer Pricing (FTP) and ALM/Treasury desk P&L.
 
-Real banks don't just report a single blended NIM - business units are
-charged/credited an internal transfer rate for the funds they use/provide,
-so profitability splits into:
+Splits total NII into customer margin (asset yield minus FTP charge; FTP
+credit minus liability cost) and ALM/Treasury desk P&L (FTP charged to
+assets minus FTP credited to liabilities). The two sum back to total NII by
+construction (see identity_check in compute_ftp_pnl).
 
-  Customer margin  - what the business unit actually earns/pays relative to
-                     the internal transfer price (asset yield minus FTP charge;
-                     FTP credit minus liability cost).
-  ALM/Treasury P&L - what's left: the transfer-pricing net (FTP charged to
-                     assets minus FTP credited to liabilities). This is the
-                     book Treasury/ALM actually manages, and it's exactly
-                     "ALM NII" - separate from customer-facing NIM.
-
-These two always sum back to total NII by construction (see the identity
-check in compute_ftp_pnl) - FTP is a zero-sum internal transfer, it doesn't
-create or destroy income, only reallocates which desk "owns" it.
-
-Methodology used here: matched-maturity FTP. Each bucket is assigned a
-transfer-pricing tenor equal to its own effective duration/average life
-(model/alm_reports.bucket_effective_duration - the same tenor already used
-for EVE, so a bucket's "how long is this money really tied up for" answer is
-consistent across reports). The FTP rate for that bucket in month t is the
-benchmark rate at t plus a spread read off `config.FTP_CURVE_SPREADS_BY_TENOR_YEARS`,
-with a management overlay flooring short-tenor spreads (mirrors a real
-episode: a curve-implied FTP methodology pricing short tenors too low during
-a rate-cutting cycle, corrected by an overlay).
+Each position is assigned a transfer-pricing tenor equal to its effective
+duration (model/alm_reports.bucket_effective_duration). Its FTP rate is the
+benchmark rate plus a spread read off config.FTP_CURVE_SPREADS_BY_TENOR_YEARS,
+floored for short tenors at FTP_SHORT_TENOR_MIN_SPREAD.
 """
 
 import numpy as np
@@ -48,12 +32,11 @@ def _ftp_spread_for_tenor(tenor_years):
 def compute_ftp_pnl(buckets, bucket_detail_df, benchmark_path, benchmark_rate_for_tenors):
     """
     buckets: list of core.position.Position for this scenario run.
-    bucket_detail_df: one scenario's detail_df from model.engine.run_scenario
+    bucket_detail_df: one scenario's detail_df from core.engine.run_scenario
                        (columns: month, bucket, side, balance, rate, interest).
     benchmark_path: this scenario's monthly benchmark rate array.
     benchmark_rate_for_tenors: benchmark level used to compute matched-maturity
-        tenors (kept fixed across scenarios so a bucket's assigned FTP tenor
-        doesn't itself shift with the rate scenario - only the curve level does).
+        tenors, kept fixed across scenarios.
 
     Returns (ftp_detail_df, ftp_monthly_df).
     """

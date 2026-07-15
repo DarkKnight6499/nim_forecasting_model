@@ -6,7 +6,7 @@
 #
 # Each entry maps 1:1 to core.position.Position. `plug: true` marks the one
 # position that absorbs the monthly balance-sheet funding gap (assets must
-# equal liabilities + equity every month - see model/engine.py);
+# equal liabilities + equity every month - see core/engine.py);
 # `cash_sink: true` marks the position that absorbs surplus cash when the
 # gap runs the other way.
 
@@ -17,6 +17,7 @@ positions:
     category_type: variable
     balance: 150_000_000
     rate: 0.0425
+    index: SHORT
     beta: 1.00
     spread: 0.00
     growth_rate_annual: 0.00
@@ -27,21 +28,20 @@ positions:
     category_type: laddered
     balance: 900_000_000
     rate: 0.0375
+    index: TENOR
+    origination_tenor_years: 2.54  # matches ladder_months=60 average life
     spread: 0.0050
     ladder_months: 60
     growth_rate_annual: 0.02
 
-  # Quarterly reset (reset_frequency_months=3) - mirrors external-benchmark-linked
-  # floating loans that reset on a fixed cadence (e.g. RLLR/MCLR-style 3-month
-  # reset) rather than continuously; the rate is flat between reset dates, then
-  # jumps to catch up. (A future iteration should replace this whole-book
-  # synchronized reset with a staggered cohort schedule.)
+  # MCLR-indexed (core/indices.py::compute_mclr). Quarterly reset
+  # (reset_frequency_months=3) is staggered across 3 cohorts by the engine.
   - name: "C&I loans (variable)"
     side: asset
     category_type: variable
     balance: 1_100_000_000
     rate: 0.0750
-    beta: 0.90
+    index: MCLR
     spread: 0.0225
     growth_rate_annual: 0.04
     rate_floor: 0.03
@@ -52,17 +52,25 @@ positions:
     category_type: fixed_amortizing
     balance: 1_600_000_000
     rate: 0.0625
+    index: FIXED
+    origination_tenor_years: 10
     spread: 0.0200
     cpr_annual: 0.12
+    cpr_max: 0.12  # refi_sensitivity=0: no rate-driven burnout
     growth_rate_annual: 0.03
 
+  # refi_sensitivity > 0: CPR rises with cohort.rate - new_production_rate, capped at cpr_max.
   - name: "Residential mortgage"
     side: asset
     category_type: fixed_amortizing
     balance: 700_000_000
     rate: 0.0575
+    index: FIXED
+    origination_tenor_years: 30
     spread: 0.0150
     cpr_annual: 0.10
+    refi_sensitivity: 2.5
+    cpr_max: 0.40
     growth_rate_annual: 0.01
 
   - name: "Consumer / other loans"
@@ -70,32 +78,24 @@ positions:
     category_type: fixed_amortizing
     balance: 250_000_000
     rate: 0.0850
+    index: FIXED
+    origination_tenor_years: 5
     spread: 0.0350
     cpr_annual: 0.20
+    cpr_max: 0.20  # refi_sensitivity=0
     growth_rate_annual: 0.02
 
   # ---- Interest-bearing liabilities ----
-  # NOW/Savings/MMDA reprice (their coupon can change) almost immediately, but two
-  # other behavioral assumptions apply on top of that repricing mechanic, and
-  # matter for different reports:
-  #   behavioral_duration_years - effective EVE duration AND the gap-report
-  #                               repricing ladder; long, because balances
-  #                               are sticky.
-  #   liquidity_decay_annual    - core-deposit attrition/runoff rate; these are
-  #                               non-maturity deposits, so a rate reset is NOT a
-  #                               cash outflow - only actual balance attrition is.
-  #                               Used by the structural liquidity view only.
-  #
-  # Each CASA-style product is further split into "core" (stable, seasonally-
-  # patterned, sticky - long duration, slow decay) and "non-core" (volatile/rate-
-  # shopped balances - short duration, fast decay). This is standard non-maturity-
-  # deposit (NMD) behavioral modeling. `seasonal: true` applies
-  # SEASONALITY_INDEX_DEPOSITS to that position's monthly growth.
+  # behavioral_duration_years: EVE duration + gap-report repricing ladder.
+  # liquidity_decay_annual: core-deposit attrition rate, used by the structural
+  # liquidity view only (a rate reset is not a cash outflow for NMDs).
+  # seasonal: true applies SEASONALITY_INDEX_DEPOSITS to monthly growth.
   - name: "NOW - Core"
     side: liability
     category_type: administered
     balance: 420_000_000
     rate: 0.0090
+    index: ADMIN
     beta: 0.15
     lag_months: 3
     growth_rate_annual: 0.02
@@ -103,23 +103,28 @@ positions:
     liquidity_decay_annual: 0.02
     seasonal: true
 
+  # Non-Core CASA feeds_mclr_deposit_cost: true (higher beta, closer to market rate).
+  # Core CASA does not (sticky, low-beta).
   - name: "NOW - Non-Core"
     side: liability
     category_type: administered
     balance: 180_000_000
     rate: 0.0120
+    index: ADMIN
     beta: 0.40
     lag_months: 1
     growth_rate_annual: 0.01
     behavioral_duration_years: 0.5
     liquidity_decay_annual: 0.25
     seasonal: true
+    feeds_mclr_deposit_cost: true
 
   - name: "Savings & MMDA - Core"
     side: liability
     category_type: administered
     balance: 780_000_000
     rate: 0.0200
+    index: ADMIN
     beta: 0.30
     lag_months: 2
     growth_rate_annual: 0.03
@@ -132,27 +137,33 @@ positions:
     category_type: administered
     balance: 520_000_000
     rate: 0.0260
+    index: ADMIN
     beta: 0.65
     lag_months: 1
     growth_rate_annual: 0.02
     behavioral_duration_years: 0.4
     liquidity_decay_annual: 0.35
     seasonal: true
+    feeds_mclr_deposit_cost: true
 
   - name: "Time deposits (CDs)"
     side: liability
     category_type: laddered
     balance: 900_000_000
     rate: 0.0400
+    index: TENOR
+    origination_tenor_years: 0.625  # matches ladder_months=14 average life
     spread: -0.0010
     ladder_months: 14
     growth_rate_annual: 0.02
+    feeds_mclr_deposit_cost: true
 
   - name: "Short-term borrowings (repo/FHLB)"
     side: liability
     category_type: variable
     balance: 200_000_000
     rate: 0.0450
+    index: SHORT
     beta: 0.95
     spread: 0.0010
     growth_rate_annual: 0.00
@@ -163,6 +174,8 @@ positions:
     category_type: laddered
     balance: 300_000_000
     rate: 0.0475
+    index: TENOR
+    origination_tenor_years: 1.54  # matches ladder_months=36 average life
     spread: 0.0075
     ladder_months: 36
     growth_rate_annual: 0.00
