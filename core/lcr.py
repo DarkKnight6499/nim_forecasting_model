@@ -18,6 +18,14 @@ Basel's 30-day outflow only covers cash actually due in that window.
 Inflows are the standard 50% factor on fully performing loans' scheduled
 runoff (fixed_amortizing positions' base CPR), capped at 75% of gross
 outflows.
+
+compute_lcr's additional_outflow parameter is a flat dollar add-on to gross
+outflows for exposures this model has no position to represent at all
+(derivatives, undrawn credit/liquidity commitments, secured wholesale
+funding/repo, other contractual/contingent obligations) - see
+data_sources/lcr_disclosures.py, used only when calibrating to a bank with a
+real disclosed figure. Zero for the synthetic default book and any
+--bank-cert run without a disclosure fixture.
 """
 
 import numpy as np
@@ -78,15 +86,21 @@ def compute_inflows(positions, balances):
     return total, breakdown
 
 
-def compute_lcr(positions, balances):
-    """balances: {position.name: balance $} for the month being evaluated."""
+def compute_lcr(positions, balances, additional_outflow=0.0, outflow_adjustment_pct=1.0):
+    """
+    balances: {position.name: balance $} for the month being evaluated.
+    outflow_adjustment_pct: the modified-LCR outflow adjustment percentage
+    some banks are subject to under the tailoring rules (< 1.0 reduces total
+    net outflow by a fixed percentage); 1.0 for the standard, unmodified LCR.
+    """
     hqla_detail = compute_hqla(positions, balances)
     gross_outflows, outflow_breakdown = compute_outflows(positions, balances)
+    gross_outflows += additional_outflow
     gross_inflows, inflow_breakdown = compute_inflows(positions, balances)
 
     capped_inflows = min(gross_inflows, config.LCR_INFLOW_CAP_PCT_OF_OUTFLOWS * gross_outflows)
     floor = (1 - config.LCR_INFLOW_CAP_PCT_OF_OUTFLOWS) * gross_outflows
-    net_outflows = max(gross_outflows - capped_inflows, floor)
+    net_outflows = max(gross_outflows - capped_inflows, floor) * outflow_adjustment_pct
 
     lcr = hqla_detail["hqla"] / net_outflows if net_outflows > 0 else np.nan
 

@@ -66,9 +66,10 @@ def main():
 
     positions = balance_sheet.load_positions()
     total_equity = None
+    lcr_calibration = {"additional_outflow": 0.0, "outflow_adjustment_pct": 1.0}
     if args.bank_cert:
         try:
-            positions, total_equity = fdic_bank.calibrate_positions_to_bank(positions, args.bank_cert)
+            positions, total_equity, lcr_calibration = fdic_bank.calibrate_positions_to_bank(positions, args.bank_cert)
         except Exception as e:
             print(f"[main] FDIC calibration failed ({e}); falling back to synthetic balance sheet.")
 
@@ -205,7 +206,7 @@ def main():
     for label, detail_df in details_by_scenario.items():
         for month in sorted(detail_df["month"].unique()):
             balances = detail_df.loc[detail_df["month"] == month].set_index("bucket")["balance"].to_dict()
-            result = lcr.compute_lcr(positions, balances)
+            result = lcr.compute_lcr(positions, balances, **lcr_calibration)
             lcr_rows.append({"scenario": label, "month": month, "lcr": result["lcr"],
                               "hqla": result["hqla"], "net_outflows": result["net_outflows"]})
     lcr_df = pd.DataFrame(lcr_rows)

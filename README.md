@@ -147,6 +147,17 @@ statement, and earnings-at-risk.
   - Note: FDIC certificate numbers can be stale for banks that were acquired/merged (their Call Report
     history stops at the merger date). Use `--bank-name` to find the right CERT, and check the printed
     "as of" date in the calibration log.
+  - **LCR composition**: FDIC's Call Report totals don't break out HQLA levels or deposit
+    outflow-stability mix, so without further help the calibrated LCR just carries over the synthetic
+    template's assumed proportions - directionally fine, but not checked against anything real. For
+    banks with a checked-in real Basel III Pillar 3 LCR disclosure fixture
+    (`data_sources/lcr_disclosures.py`; PNC/CERT 6384 ships as the worked example), the calibration
+    additionally reallocates the securities and deposit envelopes to match that bank's own reported
+    HQLA composition and deposit outflow mix, and applies its disclosed outflow adjustment percentage
+    (a real Basel tailoring-rule modifier for banks below the largest size category). PNC's calibrated
+    day-0 LCR lands at 108%, matching its own disclosed figure - see `core/lcr.py` and
+    `data_sources/fdic_bank.py::_apply_lcr_disclosure` for the mechanics. Without a fixture, LCR
+    calibration is a no-op (`additional_outflow=0`, `outflow_adjustment_pct=1.0`).
 
 ## Usage
 
@@ -218,6 +229,9 @@ see "Extending" below for how to tighten this up.
   already supported, not just parallel shocks.
 - Add Call Report category-level fields to `data_sources/fdic_bank.py` (`FIELDS`) for a more precise
   position-by-position calibration instead of the current aggregate rescaling.
+- Add another bank's real LCR disclosure to `data_sources/lcr_disclosures.py` (same fields as the
+  PNC entry, sourced from that bank's own Pillar 3 LCR/NSFR filing) to ground its calibrated day-0
+  LCR the same way, instead of the synthetic template's assumed HQLA/deposit mix.
 - Tune `behavioral_duration_years` / `liquidity_decay_annual` per position in `balance_sheet.yaml` -
   these are behavioral assumptions a real ALCO would set from the bank's own deposit studies,
   not derived from the data.
