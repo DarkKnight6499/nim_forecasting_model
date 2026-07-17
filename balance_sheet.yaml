@@ -22,17 +22,62 @@ positions:
     spread: 0.00
     growth_rate_annual: 0.00
     cash_sink: true
+    hqla_level: L1
 
-  - name: "Investment securities"
+  # ---- HQLA investment book (was one "Investment securities" line; split
+  # for LCR classification - see core/lcr.py). accounting: AFS positions get
+  # a monthly MTM series (core/mtm.py); HTM would accrue only (none held here).
+  - name: "Cash & central bank reserves"
+    side: asset
+    category_type: variable
+    balance: 80_000_000
+    rate: 0.0425
+    index: SHORT
+    beta: 1.00
+    spread: 0.00
+    growth_rate_annual: 0.01
+    hqla_level: L1
+
+  - name: "Treasuries"
     side: asset
     category_type: laddered
-    balance: 900_000_000
-    rate: 0.0375
+    balance: 300_000_000
+    rate: 0.0350
+    index: TENOR
+    origination_tenor_years: 1.54  # matches ladder_months=36 average life
+    spread: 0.0010
+    ladder_months: 36
+    growth_rate_annual: 0.02
+    hqla_level: L1
+    accounting: AFS
+    ftp_method: pooled_replicating
+
+  - name: "Agency MBS"
+    side: asset
+    category_type: laddered
+    balance: 350_000_000
+    rate: 0.0400
     index: TENOR
     origination_tenor_years: 2.54  # matches ladder_months=60 average life
-    spread: 0.0050
+    spread: 0.0060
     ladder_months: 60
     growth_rate_annual: 0.02
+    hqla_level: L2A
+    accounting: HTM
+    ftp_method: pooled_replicating
+
+  - name: "Municipal & corporate bonds"
+    side: asset
+    category_type: laddered
+    balance: 250_000_000
+    rate: 0.0450
+    index: TENOR
+    origination_tenor_years: 3.04  # matches ladder_months=72 average life
+    spread: 0.0090
+    ladder_months: 72
+    growth_rate_annual: 0.01
+    hqla_level: L2B
+    accounting: AFS
     ftp_method: pooled_replicating
 
   # MCLR-indexed (core/indices.py::compute_mclr). Quarterly reset
@@ -104,6 +149,7 @@ positions:
     liquidity_decay_annual: 0.02
     seasonal: true
     ftp_method: pooled_replicating
+    lcr_outflow_category: stable_retail
 
   # Non-Core CASA feeds_mclr_deposit_cost: true (higher beta, closer to market rate).
   # Core CASA does not (sticky, low-beta).
@@ -121,6 +167,7 @@ positions:
     seasonal: true
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
+    lcr_outflow_category: less_stable_retail
 
   - name: "Savings & MMDA - Core"
     side: liability
@@ -135,6 +182,7 @@ positions:
     liquidity_decay_annual: 0.05
     seasonal: true
     ftp_method: pooled_replicating
+    lcr_outflow_category: stable_retail
 
   - name: "Savings & MMDA - Non-Core"
     side: liability
@@ -150,6 +198,7 @@ positions:
     seasonal: true
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
+    lcr_outflow_category: less_stable_retail
 
   - name: "Time deposits (CDs)"
     side: liability
@@ -163,6 +212,7 @@ positions:
     growth_rate_annual: 0.02
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
+    lcr_outflow_category: term_deposit
 
   - name: "Short-term borrowings (repo/FHLB)"
     side: liability
@@ -174,6 +224,7 @@ positions:
     spread: 0.0010
     growth_rate_annual: 0.00
     plug: true
+    lcr_outflow_category: wholesale_non_operational
 
   - name: "Long-term FHLB / sub debt"
     side: liability
@@ -186,3 +237,4 @@ positions:
     ladder_months: 36
     growth_rate_annual: 0.00
     ftp_method: pooled_replicating
+    lcr_outflow_category: wholesale_non_operational

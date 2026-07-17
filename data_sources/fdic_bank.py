@@ -83,8 +83,9 @@ def calibrate_positions_to_bank(positions, cert_id):
     out = copy.deepcopy(positions)
 
     loan_types = {"C&I loans (variable)", "CRE loans (fixed)", "Residential mortgage", "Consumer / other loans"}
+    security_types = {"Treasuries", "Agency MBS", "Municipal & corporate bonds"}
     synth_loans = sum(b.balance for b in out if b.name in loan_types)
-    synth_sec = sum(b.balance for b in out if "securities" in b.name.lower())
+    synth_sec = sum(b.balance for b in out if b.name in security_types)
     synth_dep = sum(b.balance for b in out if b.side == "liability" and "borrowing" not in b.name.lower() and "debt" not in b.name.lower())
     synth_asset = sum(b.balance for b in out if b.side == "asset")
 
@@ -96,7 +97,7 @@ def calibrate_positions_to_bank(positions, cert_id):
     for b in out:
         if b.name in loan_types:
             b.balance *= loan_scale
-        elif "securities" in b.name.lower():
+        elif b.name in security_types:
             b.balance *= sec_scale
         elif b.side == "liability" and ("borrowing" not in b.name.lower() and "debt" not in b.name.lower()):
             b.balance *= dep_scale

@@ -123,6 +123,26 @@ def plot_ftp_alm_pnl(ftp_monthly_df, out_path):
     plt.close(fig)
 
 
+def plot_lcr_by_scenario(lcr_df, out_path, regulatory_min=None, ras_threshold=None, internal_target=None):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for label, grp in lcr_df.groupby("scenario"):
+        ax.plot(grp["month"], grp["lcr"] * 100, marker="o", markersize=3, label=label)
+    if regulatory_min is not None:
+        ax.axhline(regulatory_min * 100, color="red", linestyle="--", linewidth=1, label="Regulatory minimum")
+    if ras_threshold is not None:
+        ax.axhline(ras_threshold * 100, color="orange", linestyle="--", linewidth=1, label="RAS threshold")
+    if internal_target is not None:
+        ax.axhline(internal_target * 100, color="green", linestyle="--", linewidth=1, label="Internal target")
+    ax.set_xlabel("Month")
+    ax.set_ylabel("LCR (%)")
+    ax.set_title("Liquidity Coverage Ratio by Rate Scenario")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_liquidity_gap(liquidity_df, out_path, tolerance_pct=None):
     fig, ax1 = plt.subplots(figsize=(11, 6))
     x = range(len(liquidity_df))

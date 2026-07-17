@@ -27,6 +27,7 @@ import config
 from curve import scenarios as curve_scenarios
 from core import balance_sheet, engine
 from core.ftp import aggregate as ftp
+from core import lcr, mtm, joint_view
 from data_sources import fred_rates, fdic_bank, treasury_curve
 from model import alm_reports
 from reporting import charts, export
@@ -178,6 +179,45 @@ def main():
         end_pnl = monthly.loc[monthly["month"] == monthly["month"].max(), "alm_desk_pnl"].iloc[0]
         print(f"  {label:>12}: month 0 = ${start_pnl:,.0f}/mo   ->   final month = ${end_pnl:,.0f}/mo")
 
+    # ---------------- Liquidity Coverage Ratio (LCR) ----------------
+    lcr_rows = []
+    for label, detail_df in details_by_scenario.items():
+        for month in sorted(detail_df["month"].unique()):
+            balances = detail_df.loc[detail_df["month"] == month].set_index("bucket")["balance"].to_dict()
+            result = lcr.compute_lcr(positions, balances)
+            lcr_rows.append({"scenario": label, "month": month, "lcr": result["lcr"],
+                              "hqla": result["hqla"], "net_outflows": result["net_outflows"]})
+    lcr_df = pd.DataFrame(lcr_rows)
+
+    base_lcr = lcr_df[lcr_df["scenario"] == base_label]
+    print(f"\n=== Liquidity Coverage Ratio (base scenario) === "
+          f"(target: reg min {config.LCR_REGULATORY_MIN:.0%}, RAS {config.LCR_RAS_THRESHOLD:.0%}, "
+          f"internal target {config.LCR_INTERNAL_TARGET:.0%})")
+    for m in [0, args.months // 2, end_month]:
+        row = base_lcr[base_lcr["month"] == m].iloc[0]
+        print(f"  Month {m:>2}: LCR={row['lcr']:.1%}  HQLA=${row['hqla']:,.0f}  net 30d outflows=${row['net_outflows']:,.0f}")
+
+    # ---------------- Joint LCR-NIM view (base scenario, month 0) ----------------
+    joint_view_df = joint_view.compute_joint_view(
+        positions, details_by_scenario[base_label], base_summary, ftp_detail_df, month=0
+    )
+    print("\n=== Joint LCR-NIM View (base scenario, month 0, ranked by margin per unit of liquidity cost) ===")
+    ranked = joint_view_df.dropna(subset=["nim_per_unit_lcr_cost"]).sort_values(
+        "nim_per_unit_lcr_cost", ascending=False
+    )
+    print(ranked[["position", "side", "nim_contribution", "ftp_customer_margin", "lcr_role", "lcr_impact",
+                   "nim_per_unit_lcr_cost"]].round(4).to_string(index=False))
+
+    # ---------------- AFS mark-to-market / MTM buffer ----------------
+    mtm_detail_df, mtm_summary_df = mtm.compute_afs_mtm_report(
+        positions, curve_paths[base_label], details_by_scenario[base_label]
+    )
+    print(f"\n=== AFS MTM Buffer (base scenario) === (capped at {config.TRADING_LIMIT_PCT:.0%} of HTM book)")
+    for m in [0, args.months // 2, end_month]:
+        row = mtm_summary_df[mtm_summary_df["month"] == m].iloc[0]
+        print(f"  Month {m:>2}: unrealized gain=${row['total_unrealized_gain']:,.0f}  "
+              f"buffer limit=${row['buffer_limit']:,.0f}  buffer available=${row['buffer_available']:,.0f}")
+
     if args.ftp_recalibrate:
         from core import ftp_calibration
         from curve.historical_cycles import HISTORICAL_CYCLES
@@ -203,18 +243,23 @@ def main():
                                tolerance_pct=config.LIQUIDITY_GAP_TOLERANCE_PCT_ASSETS)
     charts.plot_earnings_at_risk(nii_delta_df, out_dir / "earnings_at_risk.png")
     charts.plot_ftp_alm_pnl(ftp_monthly_df, out_dir / "ftp_alm_pnl.png")
+    charts.plot_lcr_by_scenario(lcr_df, out_dir / "lcr_by_scenario.png", regulatory_min=config.LCR_REGULATORY_MIN,
+                                 ras_threshold=config.LCR_RAS_THRESHOLD, internal_target=config.LCR_INTERNAL_TARGET)
 
     export.export_excel(
         out_dir / "nim_forecast.xlsx", combined_summary, details_by_scenario, sensitivity_df,
         gap_df=gap_df, duration_df=duration_df, duration_summary=duration_summary,
         eve_df=eve_df, liquidity_df=liquidity_df, ear_df=ear_df,
         ftp_monthly_df=ftp_monthly_df, ftp_detail_df=ftp_detail_df,
+        lcr_df=lcr_df, joint_view_df=joint_view_df, mtm_detail_df=mtm_detail_df, mtm_summary_df=mtm_summary_df,
     )
 
     print(f"\nOutputs written to {out_dir.resolve()}")
-    print("  - nim_forecast.xlsx (NIM, gap, duration/EVE, liquidity, earnings-at-risk, FTP/ALM P&L, bucket detail)")
+    print("  - nim_forecast.xlsx (NIM, gap, duration/EVE, liquidity, earnings-at-risk, FTP/ALM P&L, LCR,")
+    print("    joint LCR-NIM view, AFS MTM, bucket detail)")
     print("  - nim_by_scenario.png, base_yield_cost_spread.png, balance_sheet_mix.png,")
-    print("    rate_sensitivity_gap.png, eve_sensitivity.png, structural_liquidity.png, ftp_alm_pnl.png")
+    print("    rate_sensitivity_gap.png, eve_sensitivity.png, structural_liquidity.png, ftp_alm_pnl.png,")
+    print("    lcr_by_scenario.png")
 
 
 if __name__ == "__main__":

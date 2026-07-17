@@ -97,8 +97,9 @@ def test_balance_sheet_yaml_matches_old_default_bucket_totals():
     positions = load_positions()
     total_assets = sum(p.balance for p in positions if p.side == "asset")
     total_liab = sum(p.balance for p in positions if p.side == "liability")
-    # Reference totals from the pre-Phase-0 config.DEFAULT_BUCKETS (see git history).
-    assert total_assets == pytest.approx(4_700_000_000)
+    # Reference totals from the pre-Phase-0 config.DEFAULT_BUCKETS (see git history),
+    # plus the $80M Cash & central bank reserves L1 HQLA position added for LCR.
+    assert total_assets == pytest.approx(4_780_000_000)
     assert total_liab == pytest.approx(3_300_000_000)
 
 

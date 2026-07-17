@@ -40,21 +40,42 @@ def test_estimate_decay_recovers_known_parameters():
 # ---------------------------------------------------------------------------
 # 2. TD renewal_rate < 1.0: less of the maturing book rolls over, the plug
 #    absorbs the difference, and the balance sheet identity still holds.
+#    Uses a small synthetic book (not balance_sheet.yaml) so the test isn't
+#    coupled to the production book's overall surplus/deficit direction,
+#    which shifts whenever positions are added/resized there.
 # ---------------------------------------------------------------------------
 
-def test_td_renewal_rate_reduces_rollover_and_plug_absorbs_shortfall():
-    positions_full = load_positions()
-    positions_partial = load_positions()
-    next(p for p in positions_partial if p.name == "Time deposits (CDs)").renewal_rate = 0.85
+def _synthetic_book(cd_renewal_rate):
+    loan = Position(
+        name="Loan", side="asset", category_type="fixed_amortizing",
+        balance=1_000_000_000, rate=0.06, index="FIXED", origination_tenor_years=5,
+        spread=0.02, cpr_annual=0.05, growth_rate_annual=0.05,
+    )
+    cd = Position(
+        name="CD", side="liability", category_type="laddered",
+        balance=600_000_000, rate=0.03, index="TENOR", origination_tenor_years=0.625,
+        ladder_months=14, growth_rate_annual=0.0, renewal_rate=cd_renewal_rate,
+    )
+    plug = Position(
+        name="Plug", side="liability", category_type="variable",
+        balance=100_000_000, rate=0.045, index="SHORT", growth_rate_annual=0.0, plug=True,
+    )
+    cash_sink = Position(
+        name="CashSink", side="asset", category_type="variable",
+        balance=50_000_000, rate=0.0425, index="SHORT", growth_rate_annual=0.0, cash_sink=True,
+    )
+    return [loan, cd, plug, cash_sink]
 
+
+def test_td_renewal_rate_reduces_rollover_and_plug_absorbs_shortfall():
     base_curve = YieldCurve(config.FALLBACK_CURVE_TENORS, config.FALLBACK_CURVE_RATES)
     paths = build_curve_scenarios(base_curve, {"Base": shocks.parallel(0)}, horizon_months=24, ramp_months=12)
 
-    summary_full, detail_full, _ = engine.run_scenario(positions_full, paths["Base"], scenario_label="full")
-    summary_partial, detail_partial, _ = engine.run_scenario(positions_partial, paths["Base"], scenario_label="partial")
+    summary_full, detail_full, _ = engine.run_scenario(_synthetic_book(1.0), paths["Base"], scenario_label="full")
+    summary_partial, detail_partial, _ = engine.run_scenario(_synthetic_book(0.85), paths["Base"], scenario_label="partial")
 
     def plug_balance(detail_df, month):
-        row = detail_df[(detail_df["bucket"] == "Short-term borrowings (repo/FHLB)") & (detail_df["month"] == month)]
+        row = detail_df[(detail_df["bucket"] == "Plug") & (detail_df["month"] == month)]
         return row["balance"].iloc[0]
 
     assert plug_balance(detail_partial, 23) > plug_balance(detail_full, 23)

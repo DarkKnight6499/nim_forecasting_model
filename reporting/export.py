@@ -3,7 +3,8 @@ import pandas as pd
 
 def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity_df=None,
                   gap_df=None, duration_df=None, duration_summary=None, eve_df=None,
-                  liquidity_df=None, ear_df=None, ftp_monthly_df=None, ftp_detail_df=None):
+                  liquidity_df=None, ear_df=None, ftp_monthly_df=None, ftp_detail_df=None,
+                  lcr_df=None, joint_view_df=None, mtm_detail_df=None, mtm_summary_df=None):
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         pivot = combined_summary_df.pivot(index="month", columns="scenario", values="nim") * 100
         pivot.round(3).to_excel(writer, sheet_name="NIM Summary (%)")
@@ -36,6 +37,18 @@ def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity
 
         if ftp_detail_df is not None:
             ftp_detail_df.round(2).to_excel(writer, sheet_name="FTP - Bucket Detail", index=False)
+
+        if lcr_df is not None:
+            lcr_df.round(4).to_excel(writer, sheet_name="LCR", index=False)
+
+        if joint_view_df is not None:
+            joint_view_df.round(4).to_excel(writer, sheet_name="Joint LCR-NIM View", index=False)
+
+        if mtm_detail_df is not None:
+            mtm_detail_df.round(2).to_excel(writer, sheet_name="AFS MTM Detail", index=False)
+
+        if mtm_summary_df is not None:
+            mtm_summary_df.round(2).to_excel(writer, sheet_name="AFS MTM Buffer", index=False)
 
         for label, detail_df in details_by_scenario.items():
             sheet = f"Buckets - {label}"[:31]

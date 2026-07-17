@@ -95,7 +95,28 @@ statement, and earnings-at-risk.
    construction (checked every run). Also reports ALM desk P&L stability across rate scenarios -
    with origination-locked pricing this stays far flatter across scenarios than a floating
    transfer rate would (see below).
-6. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
+6. **Liquidity Coverage Ratio** ([core/lcr.py](core/lcr.py)) - LCR = HQLA / max(net 30-day outflows,
+   25% of gross outflows), Basel III (BCBS238) standard factors. The investment book is split by HQLA
+   level (`hqla_level` in balance_sheet.yaml: `Cash & central bank reserves`/`Treasuries` are L1,
+   `Agency MBS` is L2A, `Municipal & corporate bonds` is L2B), each haircut and the L2B/L2 composition
+   caps applied via the standard closed-form formulas (no iteration needed). Liabilities get
+   `lcr_outflow_category` (stable/less-stable retail, term deposit, wholesale) - administered (NMD) and
+   variable liabilities run off at their factor on the full balance; laddered liabilities only on the
+   current month's maturing slice, since only cash actually due within 30 days counts. Tracked monthly
+   across every scenario (`--ftp-recalibrate`-style before/after isn't needed here; LCR just evolves
+   with the balance sheet) and charted against `config.LCR_REGULATORY_MIN`/`RAS_THRESHOLD`/`INTERNAL_TARGET`.
+7. **Joint LCR-NIM view** ([core/joint_view.py](core/joint_view.py)) - one table, per position: NIM
+   contribution, FTP customer margin, and LCR impact (HQLA contribution for assets, weighted outflow
+   contribution for liabilities) side by side, ranked by margin per unit of liquidity cost - which
+   products earn the most NIM per dollar of liquidity consumed.
+8. **AFS mark-to-market** ([core/mtm.py](core/mtm.py)) - `accounting: AFS` positions (Treasuries,
+   Municipal & corporate bonds) get a monthly unrealized gain/loss by revaluing their remaining
+   cashflow schedule (principal + accrued coupon interest) off the scenario curve; `accounting: HTM`
+   (Agency MBS) accrues only and never shows an MTM figure. Each position's valuation is calibrated to
+   book value at month 0, so reported gains reflect the curve's movement since then, not the
+   approximation's own bias. The MTM buffer report caps unrealized gains available for sale at
+   `config.TRADING_LIMIT_PCT` of the HTM book (an RBI-style trading-limit convention).
+9. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
 
 ## Data sources
 

@@ -118,6 +118,51 @@ FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
 FTP_SHORT_TENOR_CUTOFF_YEARS = 1.0
 FTP_SHORT_TENOR_MIN_SPREAD = 0.0010
 
+# ---------------------------------------------------------------------------
+# Liquidity Coverage Ratio (LCR) - see core/lcr.py. Basel III standard
+# run-off/haircut factors (BCBS238, Jan 2013), simplified to the categories
+# this balance sheet actually uses.
+# ---------------------------------------------------------------------------
+
+# HQLA haircuts by level: LCR_HQLA_HAIRCUTS[position.hqla_level].
+LCR_HQLA_HAIRCUTS = {
+    "L1": 0.00,
+    "L2A": 0.15,
+    "L2B": 0.25,
+}
+LCR_L2B_CAP_OF_HQLA = 0.15   # L2B (after haircut) capped at 15% of total HQLA
+LCR_L2_CAP_OF_HQLA = 0.40    # L2A + L2B (after haircut/cap) capped at 40% of total HQLA
+
+# 30-day outflow run-off rates by lcr_outflow_category: applied to the full
+# balance for administered/variable liabilities (no contractual maturity, or
+# already short-term); applied only to the current month's maturing slice
+# (Position.cashflow_schedule()[0]) for laddered liabilities.
+LCR_OUTFLOW_FACTORS = {
+    "stable_retail": 0.05,
+    "less_stable_retail": 0.10,
+    "term_deposit": 0.10,             # laddered term deposits maturing within 30 days
+    "wholesale_operational": 0.25,
+    "wholesale_non_operational": 0.40,
+}
+
+# Contractual inflow factor for fully performing loans (fixed_amortizing
+# assets' current month's scheduled runoff), capped at 75% of gross outflows
+# (net outflows can never fall below 25% of gross - the max() in compute_lcr).
+LCR_PERFORMING_LOAN_INFLOW_FACTOR = 0.50
+LCR_INFLOW_CAP_PCT_OF_OUTFLOWS = 0.75
+
+# LCR targets, drawn as horizontal lines on the LCR-vs-target chart.
+LCR_REGULATORY_MIN = 1.00
+LCR_RAS_THRESHOLD = 1.10
+LCR_INTERNAL_TARGET = 1.15
+
+# ---------------------------------------------------------------------------
+# AFS mark-to-market buffer - see core/mtm.py. Unrealized AFS gains
+# realizable for sale, capped as a fraction of the HTM book (RBI-style
+# trading-book limit).
+# ---------------------------------------------------------------------------
+TRADING_LIMIT_PCT = 0.05
+
 # Flat policy spread over the overnight rate for core/ftp/straight_spread.py
 # (no tenor/duration lookup - a simple fallback method).
 FTP_STRAIGHT_SPREAD = 0.0025

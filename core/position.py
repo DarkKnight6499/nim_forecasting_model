@@ -51,6 +51,9 @@ class Position:
     renewal_rate: float = 1.0                      # laddered: fraction of each maturing slice that rolls into new production
     early_withdrawal_annual: float = 0.0             # laddered: extra annual runoff on the not-yet-matured balance
     pricing_elasticity: float = 0.0                    # administered: volume response to (own rate - market rate), see core/elasticity.py
+    hqla_level: Optional[str] = None                     # assets: "L1" | "L2A" | "L2B" HQLA classification, see core/lcr.py
+    lcr_outflow_category: Optional[str] = None             # liabilities: config.LCR_OUTFLOW_FACTORS key, see core/lcr.py
+    accounting: Optional[str] = None                         # investment assets: "HTM" | "AFS", see core/mtm.py
 
     def _ladder_months_for_duration(self) -> int:
         """Uniform-ladder length whose average life ((n+1)/2 months) equals behavioral_duration_years."""
