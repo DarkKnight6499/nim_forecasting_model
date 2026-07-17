@@ -1,0 +1,257 @@
+{
+  "meta": {
+    "total": 169,
+    "parameters": {
+      "filters": "CERT:6384",
+      "fields": "REPDTE,NAME,ASSET,ERNAST,INTINC,EINTEXP,LNLSNET,SC,DEP,NIMY,EQ",
+      "limit": "14"
+    },
+    "index": {
+      "name": "risview_20260608210616",
+      "createTimestamp": "2026-06-08T21:06:18Z"
+    }
+  },
+  "data": [
+    {
+      "data": {
+        "SC": 137826865,
+        "EINTEXP": 2157987,
+        "NIMY": 3.089255737756036,
+        "ERNAST": 507669766,
+        "REPDTE": "20260331",
+        "ASSET": 567948516,
+        "INTINC": 6078527,
+        "EQ": 59440316,
+        "LNLSNET": 342366467,
+        "DEP": 441507226,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20260331"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 138976086,
+        "EINTEXP": 10038148,
+        "NIMY": 3.031410839520111,
+        "ERNAST": 507601311,
+        "REPDTE": "20251231",
+        "ASSET": 568338163,
+        "INTINC": 25173898,
+        "EQ": 59441103,
+        "LNLSNET": 329027570,
+        "DEP": 450665135,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20251231"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 142155494,
+        "EINTEXP": 7614148,
+        "NIMY": 3.006622618065073,
+        "ERNAST": 505784233,
+        "REPDTE": "20250930",
+        "ASSET": 563953196,
+        "INTINC": 18826602,
+        "EQ": 57910433,
+        "LNLSNET": 323261994,
+        "DEP": 439691784,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20250930"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 142888907,
+        "EINTEXP": 4949372,
+        "NIMY": 2.9872180992545894,
+        "ERNAST": 496417275,
+        "REPDTE": "20250630",
+        "ASSET": 554573142,
+        "INTINC": 12333280,
+        "EQ": 56652636,
+        "LNLSNET": 323671970,
+        "DEP": 433046862,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20250630"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 138261106,
+        "EINTEXP": 2436836,
+        "NIMY": 2.968008154324919,
+        "ERNAST": 490832596,
+        "REPDTE": "20250331",
+        "ASSET": 549324449,
+        "INTINC": 6097441,
+        "EQ": 55389869,
+        "LNLSNET": 315562969,
+        "DEP": 429504882,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20250331"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 140280022,
+        "EINTEXP": 12044006,
+        "NIMY": 2.8576523301108976,
+        "ERNAST": 495850677,
+        "REPDTE": "20241231",
+        "ASSET": 556138962,
+        "INTINC": 26270477,
+        "EQ": 53454729,
+        "LNLSNET": 312851818,
+        "DEP": 433565511,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20241231"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 144745034,
+        "EINTEXP": 9271765,
+        "NIMY": 2.818682422986525,
+        "ERNAST": 500951649,
+        "REPDTE": "20240930",
+        "ASSET": 559700365,
+        "INTINC": 19806878,
+        "EQ": 54272435,
+        "LNLSNET": 317560885,
+        "DEP": 430345836,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20240930"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 139114509,
+        "EINTEXP": 6095010,
+        "NIMY": 2.781186461195443,
+        "ERNAST": 492351331,
+        "REPDTE": "20240630",
+        "ASSET": 552530492,
+        "INTINC": 13012684,
+        "EQ": 51368113,
+        "LNLSNET": 317801335,
+        "DEP": 423233968,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20240630"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 130871746,
+        "EINTEXP": 3030799,
+        "NIMY": 2.754390252499456,
+        "ERNAST": 502974123,
+        "REPDTE": "20240331",
+        "ASSET": 561950304,
+        "INTINC": 6473907,
+        "EQ": 50231080,
+        "LNLSNET": 315849584,
+        "DEP": 432284317,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20240331"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 133066791,
+        "EINTEXP": 9717309,
+        "NIMY": 2.9249992924974393,
+        "ERNAST": 497060784,
+        "REPDTE": "20231231",
+        "ASSET": 557463343,
+        "INTINC": 24200034,
+        "EQ": 50108085,
+        "LNLSNET": 317468630,
+        "DEP": 428985450,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20231231"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 132862573,
+        "EINTEXP": 6802562,
+        "NIMY": 2.944497950055882,
+        "ERNAST": 491752181,
+        "REPDTE": "20230930",
+        "ASSET": 553114006,
+        "INTINC": 17726661,
+        "EQ": 47355996,
+        "LNLSNET": 314593791,
+        "DEP": 431148750,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20230930"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 136137662,
+        "EINTEXP": 4179344,
+        "NIMY": 2.974855209001558,
+        "ERNAST": 495450044,
+        "REPDTE": "20230630",
+        "ASSET": 554128320,
+        "INTINC": 11551368,
+        "EQ": 46786483,
+        "LNLSNET": 317875148,
+        "DEP": 434882015,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20230630"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 139027122,
+        "EINTEXP": 1914332,
+        "NIMY": 3.0003316152279673,
+        "ERNAST": 498780875,
+        "REPDTE": "20230331",
+        "ASSET": 556314067,
+        "INTINC": 5632557,
+        "EQ": 45627921,
+        "LNLSNET": 322751021,
+        "DEP": 446675470,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20230331"
+      },
+      "score": 0
+    },
+    {
+      "data": {
+        "SC": 140227369,
+        "EINTEXP": 2174552,
+        "NIMY": 2.7078786826088077,
+        "ERNAST": 492636202,
+        "REPDTE": "20221231",
+        "ASSET": 552307127,
+        "INTINC": 15335217,
+        "EQ": 43880895,
+        "LNLSNET": 322313154,
+        "DEP": 441983679,
+        "NAME": "PNC BANK NATIONAL ASSN",
+        "ID": "6384_20221231"
+      },
+      "score": 0
+    }
+  ],
+  "totals": {
+    "count": 169
+  }
+}

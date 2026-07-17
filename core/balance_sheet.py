@@ -11,6 +11,12 @@ DEFAULT_PATH = Path(__file__).resolve().parent.parent / "balance_sheet.yaml"
 
 _VALID_CATEGORY_TYPES = {"variable", "administered", "fixed_amortizing", "laddered"}
 
+# What a position IS for FDIC calibration purposes (data_sources/fdic_bank.py),
+# independent of its display name. Tag-driven so renaming a position (or adding
+# a new one) can never silently miscategorize it the way name-string matching
+# once did.
+CALIBRATION_CATEGORIES = {"loans", "securities", "cash", "deposits", "borrowings", "other"}
+
 
 def load_positions(path=None) -> list:
     path = Path(path) if path else DEFAULT_PATH
@@ -48,3 +54,5 @@ def validate(positions: list) -> None:
             raise ValueError(f"{p.name}: negative balance {p.balance}")
         if p.category_type == "administered" and p.behavioral_duration_years is None and p.liquidity_decay_annual is not None:
             raise ValueError(f"{p.name}: has liquidity_decay_annual but no behavioral_duration_years")
+        if p.calibration_category not in CALIBRATION_CATEGORIES:
+            raise ValueError(f"{p.name}: calibration_category must be one of {sorted(CALIBRATION_CATEGORIES)}, got {p.calibration_category!r}")

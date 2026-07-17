@@ -16,6 +16,11 @@ Examples:
   python main.py --bank-cert 3510 --fred-api-key YOUR_KEY --months 24
       Calibrate the balance sheet to a real bank (by FDIC certificate number)
       and run the full scenario set.
+
+  python main.py --bank-cert 6384 --backtest-fdic 8
+      Real out-of-sample back-test: calibrate as of 8 quarters ago, replay
+      the realized Treasury curve since then, and compare the model's
+      quarterly NII/NIM against PNC's own subsequently reported financials.
 """
 
 import argparse
@@ -49,6 +54,11 @@ def main():
     parser.add_argument("--backtest", type=str, default=None,
                          help="CSV (month, actual_nii, actual_avg_earning_assets, actual_nim) to "
                               "back-test the base scenario forecast against")
+    parser.add_argument("--backtest-fdic", type=int, nargs="?", const=8, default=None, metavar="N",
+                         help="Real out-of-sample back-test (requires --bank-cert): calibrate as of N "
+                              "quarters ago, replay the realized Treasury curve since then, and compare "
+                              "against the bank's own subsequently reported quarterly financials. "
+                              "Default 8 quarters when given bare.")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -259,6 +269,27 @@ def main():
               f"volume variance: ${backtest_df['volume_variance'].sum():,.0f}, "
               f"residual/unmodellable: ${backtest_df['residual_unmodellable'].sum():,.0f})")
 
+    fdic_backtest_df = None
+    if args.backtest_fdic:
+        if not args.bank_cert:
+            print("\n[main] --backtest-fdic requires --bank-cert (need a real bank to replay against)")
+        else:
+            from core import fdic_backtest as fdic_backtest_module
+            try:
+                fdic_backtest_df, snapshot_fin = fdic_backtest_module.run(
+                    balance_sheet.load_positions(), args.bank_cert, args.backtest_fdic
+                )
+                print(f"\n=== Real-actuals back-test: {snapshot_fin.get('NAME')} (CERT {args.bank_cert}), "
+                      f"as-of {snapshot_fin.get('REPDTE')}, {args.backtest_fdic} quarters replayed "
+                      f"against the realized Treasury curve ===")
+                print(fdic_backtest_df.round(2).to_string(index=False))
+                print(f"  Cumulative NII error: ${fdic_backtest_df['nii_error'].sum():,.0f}  "
+                      f"(rate variance: ${fdic_backtest_df['rate_variance'].sum():,.0f}, "
+                      f"volume variance: ${fdic_backtest_df['volume_variance'].sum():,.0f}, "
+                      f"residual/unmodellable: ${fdic_backtest_df['residual_unmodellable'].sum():,.0f})")
+            except Exception as e:
+                print(f"[main] FDIC real-actuals back-test failed ({e})")
+
     if args.ftp_recalibrate:
         from core import ftp_calibration
         from curve.historical_cycles import HISTORICAL_CYCLES
@@ -293,12 +324,12 @@ def main():
         eve_df=eve_df, liquidity_df=liquidity_df, ear_df=ear_df,
         ftp_monthly_df=ftp_monthly_df, ftp_detail_df=ftp_detail_df,
         lcr_df=lcr_df, joint_view_df=joint_view_df, mtm_detail_df=mtm_detail_df, mtm_summary_df=mtm_summary_df,
-        full_reval_eve_df=full_reval_eve_df, backtest_df=backtest_df,
+        full_reval_eve_df=full_reval_eve_df, backtest_df=backtest_df, fdic_backtest_df=fdic_backtest_df,
     )
 
     print(f"\nOutputs written to {out_dir.resolve()}")
     print("  - nim_forecast.xlsx (NIM, gap, duration/EVE, liquidity, earnings-at-risk, FTP/ALM P&L, LCR,")
-    print("    joint LCR-NIM view, AFS MTM, bucket detail)")
+    print("    joint LCR-NIM view, AFS MTM, back-test(s), bucket detail)")
     print("  - nim_by_scenario.png, base_yield_cost_spread.png, balance_sheet_mix.png,")
     print("    rate_sensitivity_gap.png, eve_sensitivity.png, structural_liquidity.png, ftp_alm_pnl.png,")
     print("    lcr_by_scenario.png")

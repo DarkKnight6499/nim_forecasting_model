@@ -54,6 +54,7 @@ class Position:
     hqla_level: Optional[str] = None                     # assets: "L1" | "L2A" | "L2B" HQLA classification, see core/lcr.py
     lcr_outflow_category: Optional[str] = None             # liabilities: config.LCR_OUTFLOW_FACTORS key, see core/lcr.py
     accounting: Optional[str] = None                         # investment assets: "HTM" | "AFS", see core/mtm.py
+    calibration_category: Optional[str] = None                # one of core.balance_sheet.CALIBRATION_CATEGORIES, see data_sources/fdic_bank.py
 
     def _ladder_months_for_duration(self) -> int:
         """Uniform-ladder length whose average life ((n+1)/2 months) equals behavioral_duration_years."""

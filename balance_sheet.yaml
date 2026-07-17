@@ -23,6 +23,7 @@ positions:
     growth_rate_annual: 0.00
     cash_sink: true
     hqla_level: L1
+    calibration_category: cash
 
   # ---- HQLA investment book (was one "Investment securities" line; split
   # for LCR classification - see core/lcr.py). accounting: AFS positions get
@@ -37,6 +38,7 @@ positions:
     spread: 0.00
     growth_rate_annual: 0.01
     hqla_level: L1
+    calibration_category: cash
 
   - name: "Treasuries"
     side: asset
@@ -51,6 +53,7 @@ positions:
     hqla_level: L1
     accounting: AFS
     ftp_method: pooled_replicating
+    calibration_category: securities
 
   - name: "Agency MBS"
     side: asset
@@ -65,6 +68,7 @@ positions:
     hqla_level: L2A
     accounting: HTM
     ftp_method: pooled_replicating
+    calibration_category: securities
 
   - name: "Municipal & corporate bonds"
     side: asset
@@ -79,6 +83,7 @@ positions:
     hqla_level: L2B
     accounting: AFS
     ftp_method: pooled_replicating
+    calibration_category: securities
 
   # MCLR-indexed (core/indices.py::compute_mclr). Quarterly reset
   # (reset_frequency_months=3) is staggered across 3 cohorts by the engine.
@@ -92,6 +97,7 @@ positions:
     growth_rate_annual: 0.04
     rate_floor: 0.03
     reset_frequency_months: 3
+    calibration_category: loans
 
   - name: "CRE loans (fixed)"
     side: asset
@@ -104,6 +110,7 @@ positions:
     cpr_annual: 0.12
     cpr_max: 0.12  # refi_sensitivity=0: no rate-driven burnout
     growth_rate_annual: 0.03
+    calibration_category: loans
 
   # refi_sensitivity > 0: CPR rises with cohort.rate - new_production_rate, capped at cpr_max.
   - name: "Residential mortgage"
@@ -118,6 +125,7 @@ positions:
     refi_sensitivity: 2.5
     cpr_max: 0.40
     growth_rate_annual: 0.01
+    calibration_category: loans
 
   - name: "Consumer / other loans"
     side: asset
@@ -130,6 +138,7 @@ positions:
     cpr_annual: 0.20
     cpr_max: 0.20  # refi_sensitivity=0
     growth_rate_annual: 0.02
+    calibration_category: loans
 
   # ---- Interest-bearing liabilities ----
   # behavioral_duration_years: EVE duration + gap-report repricing ladder.
@@ -150,6 +159,7 @@ positions:
     seasonal: true
     ftp_method: pooled_replicating
     lcr_outflow_category: stable_retail
+    calibration_category: deposits
 
   # Non-Core CASA feeds_mclr_deposit_cost: true (higher beta, closer to market rate).
   # Core CASA does not (sticky, low-beta).
@@ -168,6 +178,7 @@ positions:
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
     lcr_outflow_category: less_stable_retail
+    calibration_category: deposits
 
   - name: "Savings & MMDA - Core"
     side: liability
@@ -183,6 +194,7 @@ positions:
     seasonal: true
     ftp_method: pooled_replicating
     lcr_outflow_category: stable_retail
+    calibration_category: deposits
 
   - name: "Savings & MMDA - Non-Core"
     side: liability
@@ -199,6 +211,7 @@ positions:
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
     lcr_outflow_category: less_stable_retail
+    calibration_category: deposits
 
   - name: "Time deposits (CDs)"
     side: liability
@@ -213,6 +226,7 @@ positions:
     feeds_mclr_deposit_cost: true
     ftp_method: pooled_replicating
     lcr_outflow_category: term_deposit
+    calibration_category: deposits
 
   - name: "Short-term borrowings (repo/FHLB)"
     side: liability
@@ -225,6 +239,7 @@ positions:
     growth_rate_annual: 0.00
     plug: true
     lcr_outflow_category: wholesale_non_operational
+    calibration_category: borrowings
 
   - name: "Long-term FHLB / sub debt"
     side: liability
@@ -238,3 +253,4 @@ positions:
     growth_rate_annual: 0.00
     ftp_method: pooled_replicating
     lcr_outflow_category: wholesale_non_operational
+    calibration_category: borrowings

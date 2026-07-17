@@ -129,17 +129,23 @@ def _apply_lcr_disclosure(out, disclosure, real_sec_d, real_dep_d):
     return disclosure["additional_outflow_weighted"]
 
 
-def calibrate_positions_to_bank(positions, cert_id):
+def calibrate_positions_to_bank(positions, cert_id, fin=None):
     """
-    Rescales `positions` balances and rates to a real bank's latest Call
-    Report. Returns (new_position_list, total_equity_dollars, lcr_calibration);
-    does not mutate input. total_equity_dollars is None if not reported.
+    Rescales `positions` balances and rates to a real bank's Call Report.
+    Returns (new_position_list, total_equity_dollars, lcr_calibration); does
+    not mutate input. total_equity_dollars is None if not reported.
     lcr_calibration is {"additional_outflow": 0.0, "outflow_adjustment_pct": 1.0}
     unless a real LCR disclosure fixture exists for cert_id (see
     data_sources/lcr_disclosures.py), in which case it holds that bank's own
     disclosed values - pass it straight into core.lcr.compute_lcr(**lcr_calibration).
+
+    `fin` lets a caller pass a specific historical quarter's raw financials
+    row (same shape as fetch_latest_financials's return) instead of the
+    latest quarter, for the as-of calibration in core/fdic_backtest.py; when
+    omitted, the latest quarter is fetched as before.
     """
-    fin = fetch_latest_financials(cert_id)
+    if fin is None:
+        fin = fetch_latest_financials(cert_id)
     print(f"[fdic_bank] Calibrating to {fin.get('NAME')} (CERT {cert_id}), as of {fin.get('REPDTE')}")
 
     real_loans = float(fin.get("LNLSNET") or 0)
@@ -160,11 +166,15 @@ def calibrate_positions_to_bank(positions, cert_id):
 
     out = copy.deepcopy(positions)
 
-    loan_types = {"C&I loans (variable)", "CRE loans (fixed)", "Residential mortgage", "Consumer / other loans"}
-    security_types = {"Treasuries", "Agency MBS", "Municipal & corporate bonds"}
-    synth_loans = sum(b.balance for b in out if b.name in loan_types)
-    synth_sec = sum(b.balance for b in out if b.name in security_types)
-    synth_dep = sum(b.balance for b in out if b.side == "liability" and "borrowing" not in b.name.lower() and "debt" not in b.name.lower())
+    # Tag-driven (Position.calibration_category), not name-string matching: a
+    # renamed or newly added position can't silently fall into the wrong
+    # rescaling bucket (this already happened once with name sets). Positions
+    # tagged "borrowings" are deliberately left unscaled here, same as before:
+    # FDIC's DEP figure doesn't include wholesale borrowings, and there's no
+    # separate reported total to rescale them to.
+    synth_loans = sum(b.balance for b in out if b.calibration_category == "loans")
+    synth_sec = sum(b.balance for b in out if b.calibration_category == "securities")
+    synth_dep = sum(b.balance for b in out if b.calibration_category == "deposits")
     synth_asset = sum(b.balance for b in out if b.side == "asset")
 
     loan_scale = (real_loans_d / synth_loans) if (real_loans_d and synth_loans) else 1.0
@@ -173,11 +183,11 @@ def calibrate_positions_to_bank(positions, cert_id):
     other_asset_scale = (real_asset_d / synth_asset) if (real_asset_d and synth_asset) else loan_scale
 
     for b in out:
-        if b.name in loan_types:
+        if b.calibration_category == "loans":
             b.balance *= loan_scale
-        elif b.name in security_types:
+        elif b.calibration_category == "securities":
             b.balance *= sec_scale
-        elif b.side == "liability" and ("borrowing" not in b.name.lower() and "debt" not in b.name.lower()):
+        elif b.calibration_category == "deposits":
             b.balance *= dep_scale
         elif b.side == "asset":
             b.balance *= other_asset_scale

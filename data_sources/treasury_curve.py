@@ -46,6 +46,43 @@ def fetch_latest_curve(year: int = None) -> YieldCurve:
     return YieldCurve(tenors, rates)
 
 
+def get_historical_curves(start_date, end_date) -> dict:
+    """
+    Month-end YieldCurve snapshots between start_date and end_date (inclusive),
+    keyed by "YYYY-MM". One CSV request per calendar year spanned (the same
+    endpoint fetch_latest_curve uses, which returns a full year's daily rows
+    sorted most-recent-date-first); for each month, the first row encountered
+    within [start_date, end_date] is kept, which is that month's latest
+    (month-end) observation given the descending sort order.
+    """
+    curves = {}
+    for year in range(start_date.year, end_date.year + 1):
+        resp = requests.get(TREASURY_CSV_URL.format(year=year), timeout=15)
+        resp.raise_for_status()
+        lines = resp.text.strip().splitlines()
+        header = [h.strip().strip('"') for h in lines[0].split(",")]
+        for line in lines[1:]:
+            values = [v.strip().strip('"') for v in line.split(",")]
+            row = dict(zip(header, values))
+            date_str = row.get("Date")
+            if not date_str:
+                continue
+            d = datetime.datetime.strptime(date_str, "%m/%d/%Y").date()
+            if not (start_date <= d <= end_date):
+                continue
+            month_key = f"{d.year:04d}-{d.month:02d}"
+            if month_key in curves:
+                continue
+            tenors, rates = [], []
+            for col, tenor in COLUMN_TENORS.items():
+                if col in row and row[col]:
+                    tenors.append(tenor)
+                    rates.append(float(row[col]) / 100.0)
+            if tenors:
+                curves[month_key] = YieldCurve(tenors, rates)
+    return curves
+
+
 def get_base_curve(short_rate_anchor: float, fallback_tenors, fallback_rates) -> tuple:
     """
     Returns (YieldCurve, source_label). Tries the live Treasury curve first; on any
