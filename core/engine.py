@@ -11,6 +11,13 @@ average monthly balances (prev/new midpoint), never end-of-month balances,
 so the rate and volume bases are consistent with each other and with the
 interest dollars actually accrued that month (also avg-balance based).
 
+SHORT/TENOR/FIXED-indexed positions project off the base curve plus that
+index's basis overlay (curve_path.index_basis, see curve/basis.py and
+core/indices.py); this month's overlay is looked up once per position per
+month and threaded through to the relevant core/products/ step function.
+ADMIN and MCLR positions are unaffected (both are engine-driven, not
+resolved via index_rate/basis at all).
+
 MCLR is computed each month from liability positions flagged
 feeds_mclr_deposit_cost plus the plug position's current rate, before any
 MCLR-indexed position reprices that month:
@@ -41,28 +48,28 @@ from core.products import administered, fixed_amortizing, laddered, variable
 from core.products.cohort import aggregate as _aggregate_cohorts
 
 
-def _seed_cohorts(p, curve0):
+def _seed_cohorts(p, curve0, basis_overlay=None):
     if p.category_type == "variable":
-        return variable.seed(p, curve0)
+        return variable.seed(p, curve0, basis_overlay)
     if p.category_type == "fixed_amortizing":
         return fixed_amortizing.seed(p, curve0)
     return []
 
 
-def _step_variable_cohorts(p, cohorts, curve_t, t, mclr_t):
-    variable.step(p, cohorts, curve_t, t, mclr_t)
+def _step_variable_cohorts(p, cohorts, curve_t, t, mclr_t, basis_overlay=None):
+    variable.step(p, cohorts, curve_t, t, mclr_t, basis_overlay)
 
 
-def _step_fixed_amortizing_cohorts(p, cohorts, curve_t, t):
-    fixed_amortizing.step(p, cohorts, curve_t, t)
+def _step_fixed_amortizing_cohorts(p, cohorts, curve_t, t, basis_overlay=None):
+    fixed_amortizing.step(p, cohorts, curve_t, t, basis_overlay)
 
 
 def _step_administered(p, prev_balance, prev_rate, curve0, curve_lag, curve_t, t):
     return administered.step(p, prev_balance, prev_rate, curve0, curve_lag, curve_t, t)
 
 
-def _step_laddered(p, prev_balance, prev_rate, curve_t, t):
-    return laddered.step(p, prev_balance, prev_rate, curve_t, t)
+def _step_laddered(p, prev_balance, prev_rate, curve_t, t, basis_overlay=None):
+    return laddered.step(p, prev_balance, prev_rate, curve_t, t, basis_overlay)
 
 
 def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, retention_ratio=None):
@@ -91,7 +98,10 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
     curve0 = curve_path.curves[0]
     admin_state = {p.name: {"balance": p.balance, "rate": p.rate} for p in positions if p.category_type == "administered"}
     ladder_state = {p.name: {"balance": p.balance, "rate": p.rate} for p in positions if p.category_type == "laddered"}
-    cohort_state = {p.name: _seed_cohorts(p, curve0) for p in positions if p.category_type in ("variable", "fixed_amortizing")}
+    cohort_state = {
+        p.name: _seed_cohorts(p, curve0, curve_path.index_basis(0, p.index))
+        for p in positions if p.category_type in ("variable", "fixed_amortizing")
+    }
 
     prev_total_balance = {p.name: p.balance for p in positions}
 
@@ -118,7 +128,8 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
                     admin_state[p.name] = {"balance": nb, "rate": nr}
                 elif p.category_type == "laddered":
                     nb, nr, renewed, new_rate_piece = _step_laddered(
-                        p, ladder_state[p.name]["balance"], ladder_state[p.name]["rate"], curve_t, t)
+                        p, ladder_state[p.name]["balance"], ladder_state[p.name]["rate"], curve_t, t,
+                        curve_path.index_basis(t, p.index))
                     ladder_state[p.name] = {"balance": nb, "rate": nr}
                     ladder_renewed[p.name] = renewed
                     ladder_new_rate[p.name] = new_rate_piece
@@ -127,7 +138,8 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
             # current short-term borrowing rate MCLR needs).
             for p in positions:
                 if p.category_type == "variable" and p.index != "MCLR":
-                    _step_variable_cohorts(p, cohort_state[p.name], curve_t, t, mclr_t=None)
+                    _step_variable_cohorts(p, cohort_state[p.name], curve_t, t, mclr_t=None,
+                                            basis_overlay=curve_path.index_basis(t, p.index))
 
             # Stage 3: MCLR from positions flagged feeds_mclr_deposit_cost only
             # (excludes low-beta core CASA, which would otherwise understate it).
@@ -157,7 +169,8 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
                 if p.category_type == "variable" and p.index == "MCLR":
                     _step_variable_cohorts(p, cohort_state[p.name], curve_t, t, mclr_t=mclr)
                 elif p.category_type == "fixed_amortizing":
-                    _step_fixed_amortizing_cohorts(p, cohort_state[p.name], curve_t, t)
+                    _step_fixed_amortizing_cohorts(p, cohort_state[p.name], curve_t, t,
+                                                    curve_path.index_basis(t, p.index))
 
         # Aggregate every position to (balance, rate) for this month.
         new_balances, new_rates = {}, {}

@@ -13,11 +13,12 @@ floored, so a negative growth still reduces the rolled-over amount.
 from core.indices import index_rate
 
 
-def step(p, prev_balance, prev_rate, curve_t, t):
+def step(p, prev_balance, prev_rate, curve_t, t, basis_overlay=None):
     maturing = prev_balance / p.ladder_months
     growth = prev_balance * (p.growth_rate_annual / 12)
     renewed = max(0.0, maturing * p.renewal_rate + growth)
-    new_rate_piece = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
+    new_rate_piece = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years,
+                                 basis_overlay=basis_overlay) + p.spread
     if p.rate_floor is not None:
         new_rate_piece = max(new_rate_piece, p.rate_floor)
 

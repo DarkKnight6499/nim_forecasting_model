@@ -21,8 +21,9 @@ def seed(p, curve0):
                     origination_month=0, phase=0)]
 
 
-def step(p, cohorts, curve_t, t):
-    new_prod_rate = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
+def step(p, cohorts, curve_t, t, basis_overlay=None):
+    new_prod_rate = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years,
+                                basis_overlay=basis_overlay) + p.spread
     if p.rate_floor is not None:
         new_prod_rate = max(new_prod_rate, p.rate_floor)
 

@@ -143,8 +143,12 @@ def main():
           .round(4).to_string(index=False))
 
     # EVE shock scenarios: flat-shift magnitude of each curve scenario's shift
-    # function, evaluated at tenor 1.0.
-    shock_scenarios_scalar = {label: shift_fn(1.0) for label, shift_fn in config.RATE_SCENARIOS.items()}
+    # function, evaluated at tenor 1.0 (a scenario's basis_shocks, if any, are
+    # not curve shifts and don't apply to this linear approximation).
+    shock_scenarios_scalar = {
+        label: curve_scenarios.as_scenario_def(value).shift_fn(1.0)
+        for label, value in config.RATE_SCENARIOS.items()
+    }
     duration_df, duration_summary, eve_df = alm_reports.compute_duration_gap(
         positions, benchmark_rate, shock_scenarios_scalar, total_equity=total_equity
     )
@@ -154,6 +158,7 @@ def main():
           f"Duration Gap={duration_summary['duration_gap_years']:.2f}y "
           f"(equity basis: ${duration_summary['equity_used']:,.0f})")
     print("\n=== EVE Sensitivity (linear duration approximation) ===")
+    print("(basis-only scenarios show 0.00 here: this approximation only sees curve shocks, not index basis shocks)")
     print(eve_df.assign(delta_eve_pct_equity=(eve_df["delta_eve_pct_equity"] * 100).round(2)).to_string(index=False))
 
     # ---------------- Full-revaluation EVE (standard six IRRBB scenarios) ----------------

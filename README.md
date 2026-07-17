@@ -49,6 +49,12 @@ statement, and earnings-at-risk.
    (weighted new deposit production cost + the current short-term borrowing rate, see
    `core/indices.py::compute_mclr`), not an external benchmark. C&I loans are MCLR-linked
    by default: the real liability-cost -> MCLR -> asset-pricing -> NIM chain.
+   SHORT/TENOR/FIXED (and TBILL3M, unused by the default book) each carry a per-index
+   basis overlay (`config.INDEX_BASIS`, `curve/basis.py`) added on top of the base curve
+   when projecting that index - so one index can move differently from the base curve, or
+   from another index, instead of every index reading the same curve point directly.
+   Discounting (EVE, MTM, FTP) always stays on the base curve plus the position's own
+   z-spread; only index projection reads the basis overlay.
 2. **Yield curve & rate scenarios** ([curve/](curve/)) - a full term structure
    (`curve/yield_curve.py`), not a single benchmark scalar: spot/forward rates,
    discount factors, and curve-shape shocks (`curve/shocks.py`: parallel, steepener,
@@ -56,7 +62,18 @@ statement, and earnings-at-risk.
    curve (`data_sources/treasury_curve.py`), falling back to an illustrative shape
    anchored at `config.STARTING_BENCHMARK_RATE` (optionally FRED-anchored) if the
    fetch fails. Scenarios (base/flat, ±100bps, ±200bps by default) ramp in linearly
-   over 12 months (configurable) as curve transformations (`curve/scenarios.py`).
+   over 12 months (configurable) as curve transformations (`curve/scenarios.py`). A
+   scenario can also be a `(shift_fn, basis_shocks)` pair instead of a plain shift
+   function: `basis_shocks` is `{index_name: bps_shift}`, ramped the same way but
+   applied to that index's overlay instead of the base curve - two shipped scenarios,
+   `"Funding basis widening"` (SHORT +25bps) and `"Term-priced spread compression"`
+   (TENOR/FIXED -50bps), demonstrate this without moving the discount curve at all.
+   Only the NII engine (new/reset production pricing) consumes index basis. Full-
+   revaluation EVE runs its own fixed six-scenario IRRBB set (curve shocks only, see
+   below) and never sees these two scenarios at all; the linear duration approximation
+   does iterate `config.RATE_SCENARIOS` but only reads curve shift magnitude, so
+   "Funding basis widening" and "Term-priced spread compression" show 0.00 delta EVE
+   there by design, while still visibly moving NII/NIM.
 3. **Dynamic engine** ([core/engine.py](core/engine.py)) - steps every position's cohorts
    forward month by month with growth, computes interest income/expense, and annualized
    NIM = (interest income − interest expense) × 12 / avg earning assets. Enforces the
@@ -233,7 +250,13 @@ see "Extending" below for how to tighten this up.
 
 - Swap/add scenarios in `config.RATE_SCENARIOS` - each is a curve shift function
   (`curve/shocks.py`), so non-parallel scenarios (steepener, flattener, twist) are
-  already supported, not just parallel shocks.
+  already supported, not just parallel shocks. A scenario can also be a
+  `(shift_fn, basis_shocks)` pair to additionally shock one or more indices'
+  overlays (`config.INDEX_BASIS`, `curve/basis.py`) without moving the base curve.
+- Add or resize entries in `config.INDEX_BASIS` to give ADMIN or MCLR a basis too
+  (currently only SHORT/TENOR/FIXED/TBILL3M are resolved through index_rate; ADMIN
+  and MCLR are engine-driven and read the base curve directly, see core/products/
+  administered.py and core/indices.py::compute_mclr).
 - Add Call Report category-level fields to `data_sources/fdic_bank.py` (`FIELDS`) for a more precise
   position-by-position calibration instead of the current aggregate rescaling.
 - Add another bank's real LCR disclosure to `data_sources/lcr_disclosures.py` (same fields as the

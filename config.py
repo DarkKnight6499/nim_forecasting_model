@@ -8,6 +8,7 @@ curve, rate scenarios, ALM reporting bands, and the FTP policy curve.
 """
 
 from curve import shocks
+from curve.basis import BasisOverlay
 
 # ---------------------------------------------------------------------------
 # Base yield curve
@@ -27,13 +28,33 @@ HORIZON_MONTHS = 24
 
 # Each scenario is a curve shift function (tenor_years -> decimal shift), not a
 # flat scalar - this is what makes non-parallel scenarios possible. See
-# curve/shocks.py for steepener/flattener/twist/custom builders.
+# curve/shocks.py for steepener/flattener/twist/custom builders. A scenario
+# can also be a (shift_fn, basis_shocks) tuple: basis_shocks is
+# {index_name: bps_shift}, ramped the same way as the curve shift, applied
+# to that index's overlay in INDEX_BASIS below (see curve/scenarios.py and
+# core/indices.py) instead of the base curve itself - a basis shock moves
+# what an index projects to without moving the discount curve at all.
 RATE_SCENARIOS = {
     "Base (flat)": shocks.parallel(0),
     "+100 bps": shocks.parallel(100),
     "+200 bps": shocks.parallel(200),
     "-100 bps": shocks.parallel(-100),
     "-200 bps": shocks.parallel(-200),
+    # Every SHORT-indexed position (Fed funds sold, cash, short-term
+    # wholesale borrowings) reprices 25bps higher relative to the base
+    # curve, base curve itself unchanged: a funding-market stress, not a Fed
+    # move. On the default (deposit-funded, thin wholesale) book this is
+    # NIM-accretive, not dilutive - SHORT-indexed assets ($230M Fed funds
+    # sold + cash) outweigh the small SHORT-indexed liability (the plug,
+    # near-zero when the book runs surplus-funded) - a real, mix-dependent
+    # result, not the naive "wider funding cost always hurts NIM" intuition.
+    "Funding basis widening": (shocks.parallel(0), {"SHORT": 25}),
+    # Every TENOR/FIXED-priced new production (fixed-rate loans, laddered
+    # securities and term funding) reprices at a tighter spread to the base
+    # curve: a credit/liquidity spread compression across term-priced
+    # production, broader than "loans" alone since TENOR/FIXED is shared by
+    # the whole fixed-rate book, not narrowed further in this model.
+    "Term-priced spread compression": (shocks.parallel(0), {"TENOR": -50, "FIXED": -50}),
 }
 RAMP_MONTHS = 12  # scenario shock is ramped in linearly over this many months
 
@@ -54,9 +75,26 @@ RETENTION_RATIO = 1.0
 MCLR_DEPOSIT_WEIGHT = 0.7
 MCLR_EQUITY_SPREAD = 0.0025
 
-# Basis spread between a 3-month T-bill and the OIS/benchmark curve at the
-# same tenor (T-bills typically yield a bit below OIS-implied rates).
-TBILL_OIS_BASIS_SPREAD = -0.0005
+# Per-index basis overlay (curve/basis.py): added to the base curve's spot
+# rate when index_rate() projects that index, on top of whatever a
+# scenario's basis_shocks adds. None (or an all-zero overlay) means an
+# index reads the base curve directly, today's behavior. Only SHORT, TENOR,
+# FIXED and TBILL3M are resolved directly by index_rate(); ADMIN and MCLR
+# are engine-driven (core/products/administered.py, core/indices.py::
+# compute_mclr) and do not consult this table.
+ZERO_BASIS_OVERLAY = BasisOverlay({0.0: 0.0, 10.0: 0.0})
+INDEX_BASIS = {
+    # Illustrative, small: SOFR/Fed-Funds-effective-style overnight funding
+    # typically prices a few bps under a generic short curve point.
+    "SHORT": BasisOverlay({0.0: -0.0003, 10.0: -0.0003}),
+    "TENOR": None,
+    "FIXED": None,
+    # Basis spread between a 3-month T-bill and the OIS/benchmark curve at
+    # the same tenor (T-bills typically yield a bit below OIS-implied
+    # rates). Migrated from the old flat TBILL_OIS_BASIS_SPREAD constant;
+    # same value, now routed through the general per-index mechanism.
+    "TBILL3M": BasisOverlay({0.25: -0.0005, 10.0: -0.0005}),
+}
 
 # Cap on rate-dependent effective CPR for amortizing assets (refi burnout).
 CPR_MAX_DEFAULT = 0.40
