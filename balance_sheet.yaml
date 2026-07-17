@@ -102,6 +102,7 @@ positions:
     behavioral_duration_years: 3.5
     liquidity_decay_annual: 0.02
     seasonal: true
+    ftp_method: pooled_replicating
 
   # Non-Core CASA feeds_mclr_deposit_cost: true (higher beta, closer to market rate).
   # Core CASA does not (sticky, low-beta).
@@ -118,6 +119,7 @@ positions:
     liquidity_decay_annual: 0.25
     seasonal: true
     feeds_mclr_deposit_cost: true
+    ftp_method: pooled_replicating
 
   - name: "Savings & MMDA - Core"
     side: liability
@@ -131,6 +133,7 @@ positions:
     behavioral_duration_years: 2.5
     liquidity_decay_annual: 0.05
     seasonal: true
+    ftp_method: pooled_replicating
 
   - name: "Savings & MMDA - Non-Core"
     side: liability
@@ -145,6 +148,7 @@ positions:
     liquidity_decay_annual: 0.35
     seasonal: true
     feeds_mclr_deposit_cost: true
+    ftp_method: pooled_replicating
 
   - name: "Time deposits (CDs)"
     side: liability

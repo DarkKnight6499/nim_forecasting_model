@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from core.position import Position
+from core.ftp.registry import BUILDERS as _FTP_METHODS
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "balance_sheet.yaml"
 
@@ -41,6 +42,8 @@ def validate(positions: list) -> None:
             raise ValueError(f"{p.name}: side must be 'asset' or 'liability', got {p.side!r}")
         if p.category_type not in _VALID_CATEGORY_TYPES:
             raise ValueError(f"{p.name}: unknown category_type {p.category_type!r}")
+        if p.ftp_method not in _FTP_METHODS:
+            raise ValueError(f"{p.name}: unknown ftp_method {p.ftp_method!r}")
         if p.balance < 0:
             raise ValueError(f"{p.name}: negative balance {p.balance}")
         if p.category_type == "administered" and p.behavioral_duration_years is None and p.liquidity_decay_annual is not None:

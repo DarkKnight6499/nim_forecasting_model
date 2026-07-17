@@ -47,6 +47,7 @@ class Position:
     refi_sensitivity: float = 0.0            # extra annual CPR per 1.0 (100%) of coupon-vs-market-rate refi incentive
     cpr_max: float = 0.40                      # cap on rate-dependent effective CPR (fixed_amortizing)
     feeds_mclr_deposit_cost: bool = False        # this position's new production counts toward the MCLR deposit-cost input
+    ftp_method: str = "matched_maturity"          # transfer-pricing method key (see core/ftp/registry.py)
 
     def _ladder_months_for_duration(self) -> int:
         """Uniform-ladder length whose average life ((n+1)/2 months) equals behavioral_duration_years."""
@@ -108,3 +109,21 @@ class Position:
             remaining -= runoff
         leftover = max(0.0, self.balance - schedule.sum())
         return schedule, leftover
+
+
+def bucket_effective_duration(position: Position, benchmark_rate: float) -> float:
+    """Effective (modified) duration in years for one position."""
+    if position.category_type == "variable":
+        return 1 / 12
+    if position.category_type == "administered":
+        if position.behavioral_duration_years is not None:
+            return position.behavioral_duration_years
+        return max(position.lag_months / 12, 1 / 12)
+    if position.category_type == "fixed_amortizing":
+        avg_life = (1 / position.cpr_annual) if position.cpr_annual > 0 else 30.0
+        avg_life = min(avg_life, 30.0)
+        return avg_life / (1 + benchmark_rate)
+    if position.category_type == "laddered":
+        avg_life = (position.ladder_months + 1) / 2 / 12
+        return avg_life / (1 + benchmark_rate)
+    raise ValueError(f"Unknown category_type: {position.category_type}")

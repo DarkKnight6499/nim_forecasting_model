@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from core.position import bucket_effective_duration
 
 
 def _band_table(positions, schedule_method, max_months=config.ALM_MAX_MONTHS, bands=None, asset_col="RSA", liab_col="RSL"):
@@ -62,24 +63,6 @@ def compute_structural_liquidity(positions, total_assets):
     df["cumulative_gap_pct_assets"] = df["cumulative_net_gap"] / total_assets
     df["breaches_tolerance"] = df["cumulative_gap_pct_assets"] < config.LIQUIDITY_GAP_TOLERANCE_PCT_ASSETS
     return df
-
-
-def bucket_effective_duration(bucket, benchmark_rate):
-    """Effective (modified) duration in years for one bucket."""
-    if bucket.category_type == "variable":
-        return 1 / 12
-    if bucket.category_type == "administered":
-        if bucket.behavioral_duration_years is not None:
-            return bucket.behavioral_duration_years
-        return max(bucket.lag_months / 12, 1 / 12)
-    if bucket.category_type == "fixed_amortizing":
-        avg_life = (1 / bucket.cpr_annual) if bucket.cpr_annual > 0 else 30.0
-        avg_life = min(avg_life, 30.0)
-        return avg_life / (1 + benchmark_rate)
-    if bucket.category_type == "laddered":
-        avg_life = (bucket.ladder_months + 1) / 2 / 12
-        return avg_life / (1 + benchmark_rate)
-    raise ValueError(f"Unknown category_type: {bucket.category_type}")
 
 
 def compute_duration_gap(buckets, benchmark_rate, shock_scenarios, total_equity=None):

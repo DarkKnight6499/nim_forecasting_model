@@ -99,9 +99,9 @@ SEASONALITY_INDEX_DEPOSITS = [
 ]
 
 # ---------------------------------------------------------------------------
-# FTP curve - see model/ftp.py. FTP rate = benchmark rate + spread, where the
-# spread is read off this table at the position's effective duration
-# (alm_reports.bucket_effective_duration).
+# FTP policy - see core/ftp/. A position's FTP rate is the yield curve read at
+# a method-specific tenor (core/ftp/matched_maturity.py, pooled_replicating.py)
+# plus a liquidity-premium spread read off this table at that same tenor.
 # ---------------------------------------------------------------------------
 FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
     0.08: 0.0000,   # ~1 month
@@ -117,3 +117,7 @@ FTP_CURVE_SPREADS_BY_TENOR_YEARS = {
 # Floors the FTP spread at FTP_SHORT_TENOR_MIN_SPREAD for tenors below this cutoff.
 FTP_SHORT_TENOR_CUTOFF_YEARS = 1.0
 FTP_SHORT_TENOR_MIN_SPREAD = 0.0010
+
+# Flat policy spread over the overnight rate for core/ftp/straight_spread.py
+# (no tenor/duration lookup - a simple fallback method).
+FTP_STRAIGHT_SPREAD = 0.0025

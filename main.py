@@ -26,8 +26,9 @@ import pandas as pd
 import config
 from curve import scenarios as curve_scenarios
 from core import balance_sheet, engine
+from core.ftp import aggregate as ftp
 from data_sources import fred_rates, fdic_bank, treasury_curve
-from model import alm_reports, ftp
+from model import alm_reports
 from reporting import charts, export
 
 
@@ -78,9 +79,6 @@ def main():
     curve_paths = curve_scenarios.build_curve_scenarios(
         base_curve, config.RATE_SCENARIOS, args.months, config.RAMP_MONTHS
     )
-    # model/ftp.py consumes a scalar benchmark-rate path; core/engine.py reads
-    # the full curve directly.
-    scalar_paths = {label: path.short_rate_array() for label, path in curve_paths.items()}
 
     combined_summary, details_by_scenario = engine.run_all_scenarios(
         positions, curve_paths, initial_equity=total_equity
@@ -144,7 +142,7 @@ def main():
 
     # ---------------- FTP / ALM desk P&L ----------------
     ftp_detail_df, ftp_monthly_df = ftp.compute_ftp_pnl(
-        positions, details_by_scenario[base_label], scalar_paths[base_label], benchmark_rate
+        positions, details_by_scenario[base_label], curve_paths[base_label], benchmark_rate
     )
     max_err = ftp_monthly_df["identity_check"].abs().max()
     print(f"\n=== FTP / ALM Desk P&L (base scenario) === "
@@ -156,7 +154,7 @@ def main():
     # ALM desk P&L stability across rate scenarios - this is what a real FTP policy
     # review checks (see README): a well-calibrated FTP curve keeps this roughly flat.
     print("\n=== ALM Desk P&L stability across rate scenarios (month 0 vs end of horizon) ===")
-    for label, path in scalar_paths.items():
+    for label, path in curve_paths.items():
         _, monthly = ftp.compute_ftp_pnl(positions, details_by_scenario[label], path, benchmark_rate)
         start_pnl = monthly.loc[monthly["month"] == 0, "alm_desk_pnl"].iloc[0]
         end_pnl = monthly.loc[monthly["month"] == monthly["month"].max(), "alm_desk_pnl"].iloc[0]
