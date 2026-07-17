@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 outputs/
 .env
-REDESIGN_PLAN.md
+REDESIGN_PLAN*.md
 SESSION_SUMMARY.md
 .pytest_cache/
