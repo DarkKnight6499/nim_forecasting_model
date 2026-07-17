@@ -21,19 +21,26 @@ statement, and earnings-at-risk.
      NOW and Savings/MMDA are each split into **core** (stable, seasonally-patterned, sticky -
      long `behavioral_duration_years`, slow `liquidity_decay_annual`) and **non-core**
      (volatile/rate-shopped - short duration, fast decay) sub-positions - standard
-     non-maturity-deposit (NMD) behavioral modeling. `seasonal: true` applies
-     `config.SEASONALITY_INDEX_DEPOSITS` to that position's growth. Each position exposes a
-     `repricing_schedule()` (drives the rate sensitivity gap) and a `cashflow_schedule()`
-     (drives the structural liquidity statement) - deliberately different for non-maturity
-     deposits, since a rate reset is not a cash outflow.
+     non-maturity-deposit (NMD) behavioral modeling. These parameters are assumptions by
+     default, but [core/nmd_estimation.py](core/nmd_estimation.py) can estimate them from an
+     actual balance history instead (see `--deposit-history` below). `seasonal: true` applies
+     `config.SEASONALITY_INDEX_DEPOSITS` to that position's growth; `pricing_elasticity` (see
+     [core/elasticity.py](core/elasticity.py)) additionally slows or reverses growth when this
+     position's own rate lags the market (e.g. a low-beta book in a rising-rate cycle). Each
+     position exposes a `repricing_schedule()` (drives the rate sensitivity gap) and a
+     `cashflow_schedule()` (drives the structural liquidity statement) - deliberately
+     different for non-maturity deposits, since a rate reset is not a cash outflow.
    - `fixed_amortizing` - held as vintage cohorts. Each existing cohort's rate is locked
      for life (a real fixed-rate loan doesn't reprice mid-life); it runs off at a CPR
      that speeds up the further its own coupon sits above the current new-production
      rate (`refi_sensitivity`, capped at `cpr_max`) - the mortgage "burnout" effect.
      Runoff plus growth becomes a new cohort priced at the current curve tenor + spread
      (e.g. CRE, mortgage, consumer loans).
-   - `laddered` - 1/N of the balance matures and renews each month, priced at the
-     position's own curve tenor + spread (e.g. securities, CDs, term debt)
+   - `laddered` - 1/N of the balance matures each month; only `renewal_rate` of that
+     maturing slice actually rolls into new production (default 1.0) - the rest is a real
+     funding outflow the plug absorbs, not automatic rollover. `early_withdrawal_annual`
+     adds extra runoff on top of scheduled maturities. New/renewed production prices at
+     the position's own curve tenor + spread (e.g. securities, CDs, term debt).
 
    Rate indices ([core/indices.py](core/indices.py)): `SHORT` (curve spot at ~1 month),
    `TENOR`/`FIXED` (curve spot at the position's own `origination_tenor_years`), `ADMIN`
@@ -119,6 +126,11 @@ python main.py --bank-name "First National Bank"
 
 # Full run: real bank + real rate anchor, 24-month horizon
 python main.py --bank-cert 12345 --fred-api-key YOUR_FRED_KEY --months 24
+
+# Estimate NMD core/non-core behavior from an actual deposit history instead of assuming it
+# (CSV columns: month, product, balance - product must match a "{product} - Core" /
+# "{product} - Non-Core" pair in balance_sheet.yaml, e.g. "NOW", "Savings & MMDA")
+python main.py --deposit-history my_deposit_history.csv
 ```
 
 Outputs land in `outputs/`: `nim_forecast.xlsx` (NIM summary, sensitivity, rate sensitivity gap,

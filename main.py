@@ -41,6 +41,9 @@ def main():
     parser.add_argument("--output-dir", type=str, default="outputs", help="Directory for charts/Excel output")
     parser.add_argument("--ftp-recalibrate", action="store_true",
                          help="Run the FTP policy spread optimizer against the historical cycle library")
+    parser.add_argument("--deposit-history", type=str, default=None,
+                         help="CSV (month, product, balance) of deposit history; estimates behavioral "
+                              "decay parameters per product and overrides the YAML assumptions")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -63,6 +66,17 @@ def main():
             positions, total_equity = fdic_bank.calibrate_positions_to_bank(positions, args.bank_cert)
         except Exception as e:
             print(f"[main] FDIC calibration failed ({e}); falling back to synthetic balance sheet.")
+
+    if args.deposit_history:
+        from core import nmd_estimation
+        log_rows = nmd_estimation.apply_estimates_from_csv(positions, args.deposit_history)
+        if log_rows:
+            print(f"\n=== NMD behavioral estimates from {args.deposit_history} (assumed vs estimated) ===")
+            for row in log_rows:
+                assumed = f"{row['assumed']:.4f}" if row["assumed"] is not None else "None"
+                print(f"  {row['position']:<28} {row['param']:<26} assumed={assumed:>10}  estimated={row['estimated']:.4f}")
+        else:
+            print(f"\n[main] No products in {args.deposit_history} matched a Core/Non-Core position pair.")
 
     benchmark_rate, as_of = fred_rates.get_latest_benchmark_rate(
         api_key=args.fred_api_key, fallback=config.STARTING_BENCHMARK_RATE

@@ -47,8 +47,8 @@ def _step_fixed_amortizing_cohorts(p, cohorts, curve_t, t):
     fixed_amortizing.step(p, cohorts, curve_t, t)
 
 
-def _step_administered(p, prev_balance, prev_rate, curve0, curve_lag, t):
-    return administered.step(p, prev_balance, prev_rate, curve0, curve_lag, t)
+def _step_administered(p, prev_balance, prev_rate, curve0, curve_lag, curve_t, t):
+    return administered.step(p, prev_balance, prev_rate, curve0, curve_lag, curve_t, t)
 
 
 def _step_laddered(p, prev_balance, prev_rate, curve_t, t):
@@ -104,7 +104,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
                 if p.category_type == "administered":
                     lag_idx = max(0, t - p.lag_months)
                     nb, nr = _step_administered(p, admin_state[p.name]["balance"], admin_state[p.name]["rate"],
-                                                 curve0, curve_path.curves[lag_idx], t)
+                                                 curve0, curve_path.curves[lag_idx], curve_t, t)
                     admin_state[p.name] = {"balance": nb, "rate": nr}
                 elif p.category_type == "laddered":
                     nb, nr, renewed, new_rate_piece = _step_laddered(

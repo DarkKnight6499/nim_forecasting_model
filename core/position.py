@@ -48,6 +48,9 @@ class Position:
     cpr_max: float = 0.40                      # cap on rate-dependent effective CPR (fixed_amortizing)
     feeds_mclr_deposit_cost: bool = False        # this position's new production counts toward the MCLR deposit-cost input
     ftp_method: str = "matched_maturity"          # transfer-pricing method key (see core/ftp/registry.py)
+    renewal_rate: float = 1.0                      # laddered: fraction of each maturing slice that rolls into new production
+    early_withdrawal_annual: float = 0.0             # laddered: extra annual runoff on the not-yet-matured balance
+    pricing_elasticity: float = 0.0                    # administered: volume response to (own rate - market rate), see core/elasticity.py
 
     def _ladder_months_for_duration(self) -> int:
         """Uniform-ladder length whose average life ((n+1)/2 months) equals behavioral_duration_years."""
