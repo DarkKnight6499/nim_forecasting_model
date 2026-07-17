@@ -1,28 +1,18 @@
 """
 Cohort-based monthly balance-sheet / NIM simulation engine.
 
-Per-position state:
-  variable         - list of cohorts, one per reset-phase slot
-                     (reset_frequency_months cohorts). On its due month, a
-                     cohort's rate is set from its index (core/indices.py):
-                       MCLR: mclr(month) + spread.
-                       SHORT/TENOR/TBILL3M: day0_rate + beta * (index_now -
-                       index_at_cohort_creation).
-                     Growth is split evenly across phase-cohorts.
-  fixed_amortizing - list of vintage cohorts. Existing cohorts' rates are
-                     fixed; each runs off at
-                     min(cpr_max, cpr_annual + refi_sensitivity *
-                     max(0, cohort.rate - new_production_rate)). Runoff +
-                     growth forms a new cohort priced at
-                     index_rate(index, tenor_years) + spread.
-  administered     - single balance/rate state: rate = day0_rate +
-                     beta * (short_rate[t - lag_months] - short_rate[0]).
-  laddered         - single blended state: 1/ladder_months matures/renews
-                     each month at index_rate(index, tenor_years) + spread.
+Per-position mechanics live in core/products/ (one module per category_type:
+variable, fixed_amortizing, administered, laddered) - this module seeds each
+position's cohort/balance state, sequences the MCLR dependency, and enforces
+the balance sheet identity.
 
 MCLR is computed each month from liability positions flagged
 feeds_mclr_deposit_cost plus the plug position's current rate, before any
-MCLR-indexed position reprices that month.
+MCLR-indexed position reprices that month:
+  Stage 1: administered + laddered liabilities reprice (feeds MCLR's deposit-cost input).
+  Stage 2: variable positions not indexed to MCLR reprice (feeds MCLR's borrowing-cost input).
+  Stage 3: MCLR computed.
+  Stage 4: MCLR-indexed variable positions + fixed_amortizing positions reprice.
 
 Balance sheet identity (assets = liabilities + equity) is enforced from
 month 1 onward: the `plug` position absorbs a funding shortfall, the
@@ -31,119 +21,38 @@ month 1 onward: the `plug` position absorbs a funding shortfall, the
 """
 
 import copy
-from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 import config
-from core.indices import index_rate, compute_mclr
-
-
-def _monthly_from_annual_rate(annual_rate):
-    return 1 - (1 - annual_rate) ** (1 / 12) if annual_rate < 1 else annual_rate / 12
-
-
-@dataclass
-class Cohort:
-    balance: float
-    rate: float
-    day0_rate: float
-    day0_index_value: float
-    origination_month: int
-    phase: int = 0
+from core.indices import compute_mclr
+from core.products import administered, fixed_amortizing, laddered, variable
+from core.products.cohort import aggregate as _aggregate_cohorts
 
 
 def _seed_cohorts(p, curve0):
     if p.category_type == "variable":
-        n = max(1, p.reset_frequency_months)
-        piece = p.balance / n
-        idx0 = 0.0 if p.index == "MCLR" else index_rate(p.index, curve0, tenor_years=p.origination_tenor_years)
-        return [
-            Cohort(balance=piece, rate=p.rate, day0_rate=p.rate, day0_index_value=idx0,
-                   origination_month=0, phase=phase)
-            for phase in range(n)
-        ]
+        return variable.seed(p, curve0)
     if p.category_type == "fixed_amortizing":
-        return [Cohort(balance=p.balance, rate=p.rate, day0_rate=p.rate, day0_index_value=0.0,
-                        origination_month=0, phase=0)]
+        return fixed_amortizing.seed(p, curve0)
     return []
 
 
-def _aggregate_cohorts(cohorts):
-    balance = sum(c.balance for c in cohorts)
-    rate = (sum(c.balance * c.rate for c in cohorts) / balance) if balance else 0.0
-    return balance, rate
-
-
 def _step_variable_cohorts(p, cohorts, curve_t, t, mclr_t):
-    growth_m = p.growth_rate_annual / 12
-    if p.seasonal:
-        growth_m *= config.SEASONALITY_INDEX_DEPOSITS[t % 12]
-    total_growth = sum(c.balance for c in cohorts) * growth_m
-    per_cohort_growth = total_growth / len(cohorts)
-
-    for c in cohorts:
-        c.balance += per_cohort_growth
-        if t % p.reset_frequency_months == c.phase:
-            if p.index == "MCLR":
-                new_rate = mclr_t + p.spread
-            else:
-                idx_now = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years)
-                new_rate = c.day0_rate + p.beta * (idx_now - c.day0_index_value)
-            if p.rate_floor is not None:
-                new_rate = max(new_rate, p.rate_floor)
-            c.rate = max(new_rate, 0.0)
+    variable.step(p, cohorts, curve_t, t, mclr_t)
 
 
 def _step_fixed_amortizing_cohorts(p, cohorts, curve_t, t):
-    new_prod_rate = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
-    if p.rate_floor is not None:
-        new_prod_rate = max(new_prod_rate, p.rate_floor)
-
-    total_runoff = 0.0
-    for c in cohorts:
-        cpr_annual_eff = min(p.cpr_max, p.cpr_annual + p.refi_sensitivity * max(0.0, c.rate - new_prod_rate))
-        cpr_m = _monthly_from_annual_rate(cpr_annual_eff)
-        runoff = c.balance * cpr_m
-        c.balance -= runoff
-        total_runoff += runoff
-
-    total_balance = sum(c.balance for c in cohorts)
-    growth = total_balance * (p.growth_rate_annual / 12)
-    new_production = total_runoff + max(0.0, growth)
-    if new_production > 0:
-        cohorts.append(Cohort(balance=new_production, rate=new_prod_rate, day0_rate=new_prod_rate,
-                               day0_index_value=0.0, origination_month=t, phase=0))
-    cohorts[:] = [c for c in cohorts if c.balance > 1.0]
+    fixed_amortizing.step(p, cohorts, curve_t, t)
 
 
 def _step_administered(p, prev_balance, prev_rate, curve0, curve_lag, t):
-    delta = curve_lag.spot(1 / 12) - curve0.spot(1 / 12)
-    new_rate = p.rate + p.beta * delta
-    if p.rate_floor is not None:
-        new_rate = max(new_rate, p.rate_floor)
-    new_rate = max(new_rate, 0.0)
-    growth_m = p.growth_rate_annual / 12
-    if p.seasonal:
-        growth_m *= config.SEASONALITY_INDEX_DEPOSITS[t % 12]
-    new_balance = prev_balance * (1 + growth_m)
-    return new_balance, new_rate
+    return administered.step(p, prev_balance, prev_rate, curve0, curve_lag, t)
 
 
 def _step_laddered(p, prev_balance, prev_rate, curve_t, t):
-    maturing = prev_balance / p.ladder_months
-    growth = prev_balance * (p.growth_rate_annual / 12)
-    renewed = maturing + max(0.0, growth)
-    new_rate_piece = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
-    if p.rate_floor is not None:
-        new_rate_piece = max(new_rate_piece, p.rate_floor)
-    surviving = prev_balance - maturing
-    new_balance = surviving + renewed
-    if new_balance <= 0:
-        return 0.0, new_rate_piece, renewed, new_rate_piece
-    blended_rate = (surviving * prev_rate + renewed * new_rate_piece) / new_balance
-    return new_balance, blended_rate, renewed, new_rate_piece
+    return laddered.step(p, prev_balance, prev_rate, curve_t, t)
 
 
 def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, retention_ratio=None):
