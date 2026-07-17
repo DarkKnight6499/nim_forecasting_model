@@ -12,7 +12,17 @@ contractual maturity, so the ladder proxies one. For laddered positions
 (investment securities, CDs, term borrowings), n is the position's own
 ladder_months - the same rolling mechanic applies directly, since those
 books are already a real maturing ladder.
+
+Tracked as an actual deque of n tranche rates (equal-weighted), one slot per
+ladder month. At t=0 there is no origination history, so every tranche is
+back-filled flat at the month-0 renewal rate (documented approximation, same
+convention used elsewhere for t=0 back-fill). Each subsequent month the
+oldest tranche rolls off and is replaced by that month's renewal rate, so a
+tranche's influence on the blended rate is exactly zero once n months have
+passed, not merely decayed - a true ladder forgets, it does not fade.
 """
+
+from collections import deque
 
 from core.ftp.spread_curve import spread_for_tenor
 
@@ -30,11 +40,15 @@ def build_rate_series(position, curve_path, benchmark_rate_for_tenors, cohort_de
     tenor_years = n / 12
     spread = spread_for_tenor(tenor_years, spreads_by_tenor)
 
-    rates = []
-    for t, curve in enumerate(curve_path.curves):
-        renewal_rate = curve.spot(tenor_years) + spread
-        if t == 0:
-            rates.append(renewal_rate)
-        else:
-            rates.append(((n - 1) * rates[-1] + renewal_rate) / n)
+    renewal_rate_0 = curve_path.curves[0].spot(tenor_years) + spread
+    tranches = deque([renewal_rate_0] * n, maxlen=n)
+    tranche_total = renewal_rate_0 * n
+
+    rates = [tranche_total / n]
+    for t in range(1, len(curve_path.curves)):
+        renewal_rate = curve_path.curves[t].spot(tenor_years) + spread
+        oldest = tranches[0]
+        tranches.append(renewal_rate)
+        tranche_total += renewal_rate - oldest
+        rates.append(tranche_total / n)
     return rates

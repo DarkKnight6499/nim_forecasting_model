@@ -6,6 +6,11 @@ variable, fixed_amortizing, administered, laddered) - this module seeds each
 position's cohort/balance state, sequences the MCLR dependency, and enforces
 the balance sheet identity.
 
+All summary-level rates (asset yield, cost of funds, NIM) are computed on
+average monthly balances (prev/new midpoint), never end-of-month balances,
+so the rate and volume bases are consistent with each other and with the
+interest dollars actually accrued that month (also avg-balance based).
+
 MCLR is computed each month from liability positions flagged
 feeds_mclr_deposit_cost plus the plug position's current rate, before any
 MCLR-indexed position reprices that month:
@@ -197,7 +202,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
                         "origination_month": c.origination_month, "balance": c.balance, "rate": c.rate,
                     })
 
-        period_ii = period_ie = period_avg_earning_assets = 0.0
+        period_ii = period_ie = period_avg_earning_assets = period_avg_ib_liabilities = 0.0
 
         for p in positions:
             prev_balance = prev_total_balance[p.name]
@@ -212,6 +217,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
                 period_avg_earning_assets += avg_balance
             else:
                 period_ie += monthly_interest
+                period_avg_ib_liabilities += avg_balance
 
             detail_rows.append({
                 "scenario": scenario_label, "month": t, "bucket": p.name, "side": p.side,
@@ -221,8 +227,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
 
         nim_annualized = (period_ii - period_ie) * 12 / period_avg_earning_assets if period_avg_earning_assets else np.nan
         asset_yield = period_ii * 12 / period_avg_earning_assets if period_avg_earning_assets else np.nan
-        total_ib_liab = sum(new_balances[p.name] for p in positions if p.side == "liability")
-        cost_of_funds = period_ie * 12 / total_ib_liab if total_ib_liab else np.nan
+        cost_of_funds = period_ie * 12 / period_avg_ib_liabilities if period_avg_ib_liabilities else np.nan
 
         summary_rows.append({
             "scenario": scenario_label,
