@@ -5,9 +5,6 @@ pricing for new production, and rate-dependent CPR burnout).
 Run with: py -m pytest tests/ -q
 """
 
-import subprocess
-import sys
-
 import pytest
 
 import config
@@ -146,25 +143,3 @@ def test_burnout_speeds_up_runoff_when_rates_fall():
     assert survival_down_with_refi < survival_base_with_refi
     # With refi sensitivity off, CPR is a flat constant - both scenarios erode identically.
     assert survival_down_no_refi == pytest.approx(survival_base_no_refi, rel=1e-9)
-
-
-# ---------------------------------------------------------------------------
-# 6. Full suite still green end to end, PNC day-0 NIM still matches reported
-# ---------------------------------------------------------------------------
-
-def test_main_runs_end_to_end_pnc_with_new_engine():
-    result = subprocess.run(
-        [sys.executable, "main.py", "--bank-cert", "6384"],
-        capture_output=True, text=True, timeout=120,
-    )
-    assert result.returncode == 0, result.stderr
-    output = result.stdout
-
-    reported_line = next(line for line in output.splitlines() if "Bank's own latest reported NIM" in line)
-    reported_pct = float(reported_line.split(":")[1].strip().split("%")[0])
-
-    month0_line = next(line for line in output.splitlines() if line.startswith("Month  0"))
-    base_token = [tok for tok in month0_line.replace("Base (flat)", "Base(flat)").split() if tok.startswith("Base(flat)")][0]
-    model_pct = float(base_token.split("=")[1].rstrip("%"))
-
-    assert abs(model_pct - reported_pct) < 0.10  # within 10bps

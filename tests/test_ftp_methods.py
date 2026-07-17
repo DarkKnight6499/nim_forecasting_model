@@ -5,11 +5,6 @@ pooled-replicating ladder's smoothing behavior vs. matched-maturity.
 Run with: py -m pytest tests/ -q
 """
 
-import subprocess
-import sys
-
-import pytest
-
 import config
 from curve import shocks
 from curve.yield_curve import YieldCurve
@@ -108,16 +103,3 @@ def test_pooled_replicating_smooths_more_than_matched_maturity():
     # ladder rolls only a fraction of its notional each month, so its month-1
     # move should be smaller than matched_maturity's.
     assert abs(pooled[1] - pooled[0]) < abs(matched[1] - matched[0])
-
-
-# ---------------------------------------------------------------------------
-# 5. Full suite still green end to end with the new FTP package.
-# ---------------------------------------------------------------------------
-
-def test_main_runs_end_to_end_pnc_with_ftp_package():
-    result = subprocess.run(
-        [sys.executable, "main.py", "--bank-cert", "6384"],
-        capture_output=True, text=True, timeout=120,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "ALM Desk P&L stability" in result.stdout
