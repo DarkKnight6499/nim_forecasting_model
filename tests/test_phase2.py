@@ -28,14 +28,16 @@ def _default_curve_paths(months=24, ramp=12, scenario_defs=None):
 
 
 # ---------------------------------------------------------------------------
-# 1. Default balance sheet: administered positions use pooled_replicating,
-#    everything else defaults to matched_maturity.
+# 1. Default balance sheet: administered and laddered positions (both are
+#    rolling ladders with no natural single origination point) use
+#    pooled_replicating; variable and fixed_amortizing (real cohort-level
+#    origination) default to matched_maturity.
 # ---------------------------------------------------------------------------
 
-def test_administered_positions_default_to_pooled_replicating():
+def test_ftp_method_defaults_by_category_type():
     positions = load_positions()
     for p in positions:
-        if p.category_type == "administered":
+        if p.category_type in ("administered", "laddered"):
             assert p.ftp_method == "pooled_replicating"
         else:
             assert p.ftp_method == "matched_maturity"
@@ -49,8 +51,9 @@ def test_administered_positions_default_to_pooled_replicating():
 def test_ftp_reconciles_to_total_nii_with_mixed_methods():
     positions = load_positions()
     paths = _default_curve_paths()
-    _, detail = engine.run_scenario(positions, paths["+200 bps"], scenario_label="+200 bps")
-    _, monthly = ftp_aggregate.compute_ftp_pnl(positions, detail, paths["+200 bps"], config.STARTING_BENCHMARK_RATE)
+    _, detail, cohort_detail = engine.run_scenario(positions, paths["+200 bps"], scenario_label="+200 bps")
+    _, monthly = ftp_aggregate.compute_ftp_pnl(positions, detail, paths["+200 bps"], config.STARTING_BENCHMARK_RATE,
+                                                cohort_detail_df=cohort_detail)
     assert monthly["identity_check"].abs().max() < 1e-6
 
 

@@ -67,13 +67,27 @@ statement, and earnings-at-risk.
    - **Earnings-at-Risk**: cumulative NII impact vs. base at 3/6/12/24-month horizons, plus the
      full monthly delta series - a bank can be asset-sensitive near-term and liability-sensitive
      further out, so a single-horizon number can hide a real crossover (see the PNC example below)
-5. **FTP / ALM desk P&L** ([model/ftp.py](model/ftp.py)) - matched-maturity Funds Transfer Pricing:
-   every position is charged/credited a transfer rate (benchmark + a tenor-based spread, using the
-   same effective-duration tenor as the EVE calc), splitting total NII into **customer margin**
+5. **FTP / ALM desk P&L** ([core/ftp/](core/ftp/)) - Funds Transfer Pricing, with the method
+   selectable per position (`ftp_method` in `balance_sheet.yaml`, dispatched via
+   `core/ftp/registry.py`):
+   - **matched_maturity** - origination-locked: a `fixed_amortizing` cohort's transfer rate is set
+     once, from the curve at its origination month and its own tenor, and never moves again (this
+     is what immunizes a fixed-rate loan's customer margin from the scenario's rate path); a
+     `variable` position's transfer rate is set at its reset tenor and re-fixed only on reset
+     months. This is the default for both.
+   - **pooled_replicating** - a rolling ladder of tranches (behavioral-duration-equivalent for
+     administered/NMD positions, `ladder_months` for laddered positions), re-fixing only the
+     maturing 1/N slice each month. Default for `administered` and `laddered` positions, which
+     have no single real origination point.
+   - **straight_spread** - flat spread over the overnight rate, no tenor lookup; a simple opt-in
+     fallback.
+
+   Every position is charged/credited its FTP rate, splitting total NII into **customer margin**
    (what business units earn vs. the internal transfer price) and **ALM/Treasury desk P&L** (the
    transfer-pricing net - this *is* "ALM NII"). The two always reconcile exactly to total NII by
    construction (checked every run). Also reports ALM desk P&L stability across rate scenarios -
-   a well-calibrated FTP curve keeps this roughly flat; the default curve here doesn't (see below).
+   with origination-locked pricing this stays far flatter across scenarios than a floating
+   transfer rate would (see below).
 6. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
 
 ## Data sources
@@ -111,16 +125,17 @@ Outputs land in `outputs/`: `nim_forecast.xlsx` (NIM summary, sensitivity, rate 
 duration detail/summary, EVE sensitivity, structural liquidity, earnings-at-risk, FTP/ALM desk P&L,
 and full per-scenario bucket detail - one sheet each) plus 9 charts.
 
-## FTP curve calibration isn't neutral by default - and that's the point
+## FTP policy spread calibration
 
-The `python main.py` run prints "ALM Desk P&L stability across rate scenarios": with the default
-`FTP_CURVE_SPREADS_BY_TENOR_YEARS`, ALM desk P&L swings meaningfully across scenarios (e.g. ~$4.2M/mo
-under -200bps vs. ~$9.2M/mo under +200bps on the synthetic book) rather than staying flat. That's
-expected - this is a simple static spread curve, not one calibrated against the book's actual
-duration mismatch. In practice this is exactly what an annual FTP policy review is for: back-test
-ALM P&L across historical rate cycles and recalibrate the curve (or apply a management overlay on
-specific tenors) until desk P&L stays roughly neutral regardless of which way rates move. Tune
-`config.FTP_CURVE_SPREADS_BY_TENOR_YEARS` / `FTP_SHORT_TENOR_MIN_SPREAD` to see the effect.
+`python main.py --ftp-recalibrate` runs `core/ftp_calibration.py`: an optimizer that tunes
+`config.FTP_CURVE_SPREADS_BY_TENOR_YEARS` to minimize the variance of monthly ALM desk P&L across a
+library of stylized historical rate cycles (`curve/historical_cycles.py`: a 2008-style collapse, a
+2013-style taper steepening, a 2018-style hiking cycle, a 2020-style crash to zero - illustrative
+shapes, not fitted to actual historical data), subject to the short-tenor minimum spread floor
+(`FTP_SHORT_TENOR_MIN_SPREAD`). This mirrors an annual FTP policy review: back-test ALM desk P&L
+across past rate cycles and recalibrate the curve until desk P&L stays roughly neutral regardless of
+which way rates moved. Prints before/after cross-cycle variance and the calibrated spread curve;
+tune `config.FTP_CURVE_SPREADS_BY_TENOR_YEARS` directly to apply a manual management overlay instead.
 
 ## Worked example: PNC Bank (CERT 6384)
 

@@ -39,6 +39,8 @@ def main():
     parser.add_argument("--fred-api-key", type=str, default=None, help="FRED API key (or set FRED_API_KEY env var)")
     parser.add_argument("--months", type=int, default=config.HORIZON_MONTHS, help="Forecast horizon in months")
     parser.add_argument("--output-dir", type=str, default="outputs", help="Directory for charts/Excel output")
+    parser.add_argument("--ftp-recalibrate", action="store_true",
+                         help="Run the FTP policy spread optimizer against the historical cycle library")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -80,7 +82,7 @@ def main():
         base_curve, config.RATE_SCENARIOS, args.months, config.RAMP_MONTHS
     )
 
-    combined_summary, details_by_scenario = engine.run_all_scenarios(
+    combined_summary, details_by_scenario, cohort_details_by_scenario = engine.run_all_scenarios(
         positions, curve_paths, initial_equity=total_equity
     )
 
@@ -142,7 +144,8 @@ def main():
 
     # ---------------- FTP / ALM desk P&L ----------------
     ftp_detail_df, ftp_monthly_df = ftp.compute_ftp_pnl(
-        positions, details_by_scenario[base_label], curve_paths[base_label], benchmark_rate
+        positions, details_by_scenario[base_label], curve_paths[base_label], benchmark_rate,
+        cohort_detail_df=cohort_details_by_scenario[base_label],
     )
     max_err = ftp_monthly_df["identity_check"].abs().max()
     print(f"\n=== FTP / ALM Desk P&L (base scenario) === "
@@ -155,10 +158,27 @@ def main():
     # review checks (see README): a well-calibrated FTP curve keeps this roughly flat.
     print("\n=== ALM Desk P&L stability across rate scenarios (month 0 vs end of horizon) ===")
     for label, path in curve_paths.items():
-        _, monthly = ftp.compute_ftp_pnl(positions, details_by_scenario[label], path, benchmark_rate)
+        _, monthly = ftp.compute_ftp_pnl(positions, details_by_scenario[label], path, benchmark_rate,
+                                          cohort_detail_df=cohort_details_by_scenario[label])
         start_pnl = monthly.loc[monthly["month"] == 0, "alm_desk_pnl"].iloc[0]
         end_pnl = monthly.loc[monthly["month"] == monthly["month"].max(), "alm_desk_pnl"].iloc[0]
         print(f"  {label:>12}: month 0 = ${start_pnl:,.0f}/mo   ->   final month = ${end_pnl:,.0f}/mo")
+
+    if args.ftp_recalibrate:
+        from core import ftp_calibration
+        from curve.historical_cycles import HISTORICAL_CYCLES
+        cycle_paths = {name: builder(base_curve, args.months) for name, builder in HISTORICAL_CYCLES.items()}
+        print("\n=== FTP policy spread calibration (minimizing cross-cycle ALM desk P&L variance) ===")
+        before_variance = ftp_calibration.cross_cycle_variance(positions, cycle_paths, benchmark_rate)
+        calibrated_spreads = ftp_calibration.calibrate_policy_spreads(positions, cycle_paths, benchmark_rate)
+        after_variance = ftp_calibration.cross_cycle_variance(
+            positions, cycle_paths, benchmark_rate, spreads_by_tenor=calibrated_spreads
+        )
+        print(f"  ALM desk P&L variance before calibration: {before_variance:,.0f}")
+        print(f"  ALM desk P&L variance after calibration:  {after_variance:,.0f}")
+        print("  Calibrated spread curve (tenor years -> spread):")
+        for tenor, spread in sorted(calibrated_spreads.items()):
+            print(f"    {tenor:>6.2f}y: {spread * 10000:6.1f} bps")
 
     charts.plot_nim_by_scenario(combined_summary, out_dir / "nim_by_scenario.png")
     charts.plot_yield_cost_spread(base_summary, out_dir / "base_yield_cost_spread.png")

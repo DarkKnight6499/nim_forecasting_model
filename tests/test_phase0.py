@@ -134,7 +134,7 @@ def test_balance_sheet_identity_holds_each_month():
     flat_curve = YieldCurve([1 / 12, 1.0, 10.0], [0.0425, 0.0425, 0.0425])
     paths = build_curve_scenarios(flat_curve, {"Base": shocks.parallel(0)}, horizon_months=24, ramp_months=12)
 
-    summary_df, detail_df = engine.run_scenario(positions, paths["Base"], scenario_label="Base")
+    summary_df, detail_df, _ = engine.run_scenario(positions, paths["Base"], scenario_label="Base")
 
     for month in range(1, 24):
         month_detail = detail_df[detail_df["month"] == month]

@@ -9,6 +9,7 @@ BUILDERS = {
 }
 
 
-def build_rate_series(position, curve_path, benchmark_rate_for_tenors):
+def build_rate_series(position, curve_path, benchmark_rate_for_tenors, cohort_detail_df=None, spreads_by_tenor=None):
     builder = BUILDERS[position.ftp_method]
-    return builder(position, curve_path, benchmark_rate_for_tenors)
+    return builder(position, curve_path, benchmark_rate_for_tenors,
+                    cohort_detail_df=cohort_detail_df, spreads_by_tenor=spreads_by_tenor)

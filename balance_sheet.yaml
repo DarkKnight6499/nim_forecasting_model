@@ -33,6 +33,7 @@ positions:
     spread: 0.0050
     ladder_months: 60
     growth_rate_annual: 0.02
+    ftp_method: pooled_replicating
 
   # MCLR-indexed (core/indices.py::compute_mclr). Quarterly reset
   # (reset_frequency_months=3) is staggered across 3 cohorts by the engine.
@@ -161,6 +162,7 @@ positions:
     ladder_months: 14
     growth_rate_annual: 0.02
     feeds_mclr_deposit_cost: true
+    ftp_method: pooled_replicating
 
   - name: "Short-term borrowings (repo/FHLB)"
     side: liability
@@ -183,3 +185,4 @@ positions:
     spread: 0.0075
     ladder_months: 36
     growth_rate_annual: 0.00
+    ftp_method: pooled_replicating

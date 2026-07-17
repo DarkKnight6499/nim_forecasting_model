@@ -17,7 +17,8 @@ import pandas as pd
 from core.ftp.registry import build_rate_series
 
 
-def compute_ftp_pnl(positions, position_detail_df, curve_path, benchmark_rate_for_tenors):
+def compute_ftp_pnl(positions, position_detail_df, curve_path, benchmark_rate_for_tenors,
+                     cohort_detail_df=None, spreads_by_tenor=None):
     """
     positions: list of core.position.Position for this scenario run.
     position_detail_df: one scenario's detail_df from core.engine.run_scenario
@@ -25,11 +26,16 @@ def compute_ftp_pnl(positions, position_detail_df, curve_path, benchmark_rate_fo
     curve_path: this scenario's curve.scenarios.CurvePath.
     benchmark_rate_for_tenors: benchmark level used to size matched-maturity/
         pooled-replicating tenors, kept fixed across scenarios.
+    cohort_detail_df: this scenario's cohort_detail_df from core.engine.run_scenario,
+        needed by matched_maturity's origination-locked fixed_amortizing pricing.
+    spreads_by_tenor: overrides config.FTP_CURVE_SPREADS_BY_TENOR_YEARS (core/ftp_calibration.py uses this).
 
     Returns (ftp_detail_df, ftp_monthly_df).
     """
     rate_series_by_position = {
-        p.name: build_rate_series(p, curve_path, benchmark_rate_for_tenors) for p in positions
+        p.name: build_rate_series(p, curve_path, benchmark_rate_for_tenors,
+                                   cohort_detail_df=cohort_detail_df, spreads_by_tenor=spreads_by_tenor)
+        for p in positions
     }
 
     df = position_detail_df.sort_values(["bucket", "month"]).copy()

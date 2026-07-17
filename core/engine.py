@@ -58,7 +58,12 @@ def _step_laddered(p, prev_balance, prev_rate, curve_t, t):
 def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, retention_ratio=None):
     """
     Simulates one rate scenario across all positions for len(curve_path) months.
-    Returns (monthly_summary_df, position_detail_df) - same schema as before.
+    Returns (monthly_summary_df, position_detail_df, cohort_detail_df).
+
+    cohort_detail_df carries fixed_amortizing positions' per-vintage balances
+    (month, bucket, origination_month, balance, rate) - the vintage mix needed
+    for origination-locked FTP (core/ftp/matched_maturity.py), which position_detail_df's
+    position-aggregated rows can't reconstruct on their own.
     """
     horizon = len(curve_path.curves)
     retention_ratio = config.RETENTION_RATIO if retention_ratio is None else retention_ratio
@@ -82,6 +87,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
 
     summary_rows = []
     detail_rows = []
+    cohort_detail_rows = []
     prev_period_nii = 0.0
 
     for t in range(horizon):
@@ -164,6 +170,14 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
             cohort_state[adjust_name][0].balance += adjust_amount
             new_balances[adjust_name], new_rates[adjust_name] = _aggregate_cohorts(cohort_state[adjust_name])
 
+        for p in positions:
+            if p.category_type == "fixed_amortizing":
+                for c in cohort_state[p.name]:
+                    cohort_detail_rows.append({
+                        "scenario": scenario_label, "month": t, "bucket": p.name,
+                        "origination_month": c.origination_month, "balance": c.balance, "rate": c.rate,
+                    })
+
         period_ii = period_ie = period_avg_earning_assets = 0.0
 
         for p in positions:
@@ -208,18 +222,23 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
 
         prev_period_nii = period_ii - period_ie
 
-    return pd.DataFrame(summary_rows), pd.DataFrame(detail_rows)
+    return pd.DataFrame(summary_rows), pd.DataFrame(detail_rows), pd.DataFrame(cohort_detail_rows)
 
 
 def run_all_scenarios(positions, curve_paths: dict, initial_equity=None, retention_ratio=None):
-    """curve_paths: {label: curve.scenarios.CurvePath}. Returns (combined_summary_df, {label: detail_df})."""
+    """
+    curve_paths: {label: curve.scenarios.CurvePath}.
+    Returns (combined_summary_df, {label: detail_df}, {label: cohort_detail_df}).
+    """
     summaries = []
     details = {}
+    cohort_details = {}
     for label, curve_path in curve_paths.items():
-        summary_df, detail_df = run_scenario(
+        summary_df, detail_df, cohort_detail_df = run_scenario(
             copy.deepcopy(positions), curve_path, scenario_label=label,
             initial_equity=initial_equity, retention_ratio=retention_ratio,
         )
         summaries.append(summary_df)
         details[label] = detail_df
-    return pd.concat(summaries, ignore_index=True), details
+        cohort_details[label] = cohort_detail_df
+    return pd.concat(summaries, ignore_index=True), details, cohort_details

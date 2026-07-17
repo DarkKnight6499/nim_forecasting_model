@@ -38,7 +38,7 @@ def _default_curve_paths(months=24, ramp=12, scenario_defs=None):
 def test_no_sawtooth_in_nim_series_under_plus_200bps():
     positions = load_positions()
     paths = _default_curve_paths(scenario_defs={"+200 bps": shocks.parallel(200)})
-    summary_df, _ = _run(positions, paths["+200 bps"], label="+200 bps")
+    summary_df, _, _ = _run(positions, paths["+200 bps"], label="+200 bps")
 
     nim = summary_df.sort_values("month")["nim"].to_numpy()
     window = nim[3:13]  # months 3-12 inclusive
@@ -77,8 +77,8 @@ def test_mclr_linked_asset_yield_tracks_deposit_and_borrowing_cost():
         "-200 bps": shocks.parallel(-200),
     })
 
-    _, detail_up = _run(positions, paths["+200 bps"], label="+200 bps")
-    _, detail_down = _run(positions, paths["-200 bps"], label="-200 bps")
+    _, detail_up, _ = _run(positions, paths["+200 bps"], label="+200 bps")
+    _, detail_down, _ = _run(positions, paths["-200 bps"], label="-200 bps")
 
     def ci_rate(detail_df, month):
         row = detail_df[(detail_df["bucket"] == "C&I loans (variable)") & (detail_df["month"] == month)]
