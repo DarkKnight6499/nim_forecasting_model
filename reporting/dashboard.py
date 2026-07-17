@@ -20,6 +20,8 @@ import math
 import config
 
 _TEMPLATE_PATH_TOKEN = "__DASHBOARD_DATA_JSON__"
+_INPUTS_PANEL_TOKEN = "__INPUTS_PANEL__"
+_LIVE_SCRIPT_TOKEN = "__LIVE_SCRIPT_EXTRA__"
 
 
 def _clean(value):
@@ -32,7 +34,7 @@ def _records(df, columns):
     return [{c: _clean(row[c]) for c in columns} for row in df.to_dict("records")]
 
 
-def _build_data(r):
+def build_data(r):
     scenarios = list(r.combined_summary["scenario"].unique())
 
     nim_by_scenario = {}
@@ -88,9 +90,20 @@ def _build_data(r):
              "rate_variance", "volume_variance", "residual_unmodellable"],
         )}
 
+    position_rows = [
+        {"name": p.name, "side": p.side, "balance": p.balance, "rate": p.rate,
+         "growth_rate_annual": p.growth_rate_annual}
+        for p in r.positions
+    ]
+
     return {
         "scenarios": scenarios,
         "base_scenario": r.base_label,
+        "months": r.months,
+        "bank_cert": r.bank_cert,
+        "dividend_payout_ratio": r.dividend_payout_ratio,
+        "custom_shock_bps": r.custom_shock_bps,
+        "positions": position_rows,
         "nim_by_scenario": nim_by_scenario,
         "lcr_by_scenario": lcr_by_scenario,
         "nsfr_by_scenario": nsfr_by_scenario,
@@ -114,12 +127,25 @@ def _build_data(r):
 
 
 def write_dashboard(r, out_path):
-    """r: a completed pipeline.RunResults. Writes a single self-contained HTML file to out_path."""
-    data = _build_data(r)
-    data_json = json.dumps(data).replace("</", "<\\/")
-    html = _HTML_TEMPLATE.replace(_TEMPLATE_PATH_TOKEN, data_json)
+    """r: a completed pipeline.RunResults. Writes a single self-contained, static HTML file
+    to out_path (no inputs panel, no fetch: identical to every prior version of this page)."""
+    html = render_page(build_data(r), live=False)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+
+def render_live_page(data):
+    """Same page, plus the live-inputs panel and its JS (see dashboard_server.py)."""
+    return render_page(data, live=True)
+
+
+def render_page(data, live=False):
+    data_json = json.dumps(data).replace("</", "<\\/")
+    html = _HTML_TEMPLATE
+    html = html.replace(_INPUTS_PANEL_TOKEN, _LIVE_INPUTS_PANEL_HTML if live else "")
+    html = html.replace(_LIVE_SCRIPT_TOKEN, _LIVE_SCRIPT_EXTRA_JS if live else "")
+    html = html.replace(_TEMPLATE_PATH_TOKEN, data_json)
+    return html
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -138,6 +164,16 @@ _HTML_TEMPLATE = """<!doctype html>
   .toggles { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
   .toggles label { background: #1f2630; border: 1px solid #333c48; border-radius: 14px; padding: 4px 10px;
                     font-size: 0.85rem; cursor: pointer; user-select: none; }
+  .live-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-bottom: 12px; font-size: 0.85rem; }
+  .live-controls input[type=number], .live-controls input[type=text] {
+    background: #10151c; border: 1px solid #333c48; color: #e6e6e6; border-radius: 4px; padding: 3px 6px;
+  }
+  .live-controls button { background: #2f6fa8; color: #fff; border: none; border-radius: 6px; padding: 6px 16px;
+                            cursor: pointer; font-size: 0.85rem; }
+  .live-controls button:hover { background: #3a82c4; }
+  .live-controls button:disabled { background: #444c56; cursor: default; }
+  #table-position-overrides input { width: 100px; background: #10151c; border: 1px solid #333c48; color: #e6e6e6;
+                                      border-radius: 4px; padding: 2px 4px; text-align: right; }
   svg { width: 100%; height: auto; background: #10151c; border-radius: 6px; }
   .axis text { fill: #9aa4b2; font-size: 10px; }
   .gridline { stroke: #2a3138; stroke-width: 1; }
@@ -157,6 +193,8 @@ _HTML_TEMPLATE = """<!doctype html>
 <div class="subtitle">Base scenario: <span id="base-scenario-label"></span>. Toggle scenarios below to filter the
   NIM / LCR / NSFR charts; every other section is base-scenario or fixed-scenario-set by construction (see page
   source comment in reporting/dashboard.py for why).</div>
+
+__INPUTS_PANEL__
 
 <div class="section">
   <h2>Scenario filter</h2>
@@ -406,12 +444,114 @@ function renderScenarioToggles() {
   });
 }
 
-document.getElementById("base-scenario-label").textContent = DATA.base_scenario;
-renderScenarioToggles();
-renderScenarioCharts();
-renderStaticCharts();
-renderTables();
+function refreshDashboard() {
+  visibleScenarios = new Set(DATA.scenarios);
+  document.getElementById("base-scenario-label").textContent = DATA.base_scenario;
+  renderScenarioToggles();
+  renderScenarioCharts();
+  renderStaticCharts();
+  renderTables();
+}
+
+__LIVE_SCRIPT_EXTRA__
+
+refreshDashboard();
 </script>
 </body>
 </html>
+"""
+
+_LIVE_INPUTS_PANEL_HTML = """
+<div class="section">
+  <h2>Live inputs</h2>
+  <div class="live-controls">
+    <label>Months <input type="number" id="input-months" min="1" max="120" style="width:64px"></label>
+    <label>Bank cert (FDIC, blank = synthetic) <input type="text" id="input-bank-cert" style="width:100px"></label>
+    <label>Dividend payout <input type="number" id="input-dividend-payout" min="0" max="1" step="0.05" style="width:64px"></label>
+    <label>Custom shock (bps, blank = none) <input type="number" id="input-custom-shock" step="10" style="width:80px"></label>
+    <button id="run-button">Run</button>
+    <span id="run-status" class="subtitle"></span>
+  </div>
+  <table id="table-position-overrides">
+    <thead><tr><th>Position</th><th>Side</th><th>Balance ($)</th><th>Rate</th><th>Growth rate (annual)</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
+"""
+
+_LIVE_SCRIPT_EXTRA_JS = """
+function populateLiveInputs() {
+  document.getElementById("input-months").value = DATA.months;
+  document.getElementById("input-bank-cert").value = DATA.bank_cert === null ? "" : DATA.bank_cert;
+  document.getElementById("input-dividend-payout").value = DATA.dividend_payout_ratio;
+  document.getElementById("input-custom-shock").value = DATA.custom_shock_bps === null ? "" : DATA.custom_shock_bps;
+
+  const tbody = document.querySelector("#table-position-overrides tbody");
+  tbody.innerHTML = DATA.positions.map(p => `
+    <tr>
+      <td>${p.name}</td>
+      <td>${p.side}</td>
+      <td><input type="number" class="pos-balance" data-name="${p.name}" data-baseline="${p.balance}" value="${p.balance}" step="1000000"></td>
+      <td><input type="number" class="pos-rate" data-name="${p.name}" data-baseline="${p.rate}" value="${p.rate}" step="0.0001"></td>
+      <td><input type="number" class="pos-growth" data-name="${p.name}" data-baseline="${p.growth_rate_annual}" value="${p.growth_rate_annual}" step="0.01"></td>
+    </tr>
+  `).join("");
+}
+
+function collectPositionOverrides() {
+  const overrides = {};
+  const fieldByClass = {"pos-balance": "balance", "pos-rate": "rate", "pos-growth": "growth_rate_annual"};
+  document.querySelectorAll("#table-position-overrides input").forEach(input => {
+    const cls = Object.keys(fieldByClass).find(c => input.classList.contains(c));
+    const field = fieldByClass[cls];
+    const baseline = parseFloat(input.getAttribute("data-baseline"));
+    const current = parseFloat(input.value);
+    if (Number.isNaN(current) || current === baseline) { return; }
+    const name = input.getAttribute("data-name");
+    overrides[name] = overrides[name] || {};
+    overrides[name][field] = current;
+  });
+  return overrides;
+}
+
+async function runModel() {
+  const statusEl = document.getElementById("run-status");
+  const button = document.getElementById("run-button");
+  const monthsVal = parseInt(document.getElementById("input-months").value, 10);
+  const bankCertVal = document.getElementById("input-bank-cert").value.trim();
+  const payoutVal = parseFloat(document.getElementById("input-dividend-payout").value);
+  const shockVal = document.getElementById("input-custom-shock").value.trim();
+
+  const payload = {
+    months: Number.isNaN(monthsVal) ? null : monthsVal,
+    bank_cert: bankCertVal === "" ? null : parseInt(bankCertVal, 10),
+    dividend_payout_ratio: Number.isNaN(payoutVal) ? null : payoutVal,
+    custom_shock_bps: shockVal === "" ? null : parseFloat(shockVal),
+    position_overrides: collectPositionOverrides(),
+  };
+
+  button.disabled = true;
+  statusEl.textContent = "Running...";
+  try {
+    const resp = await fetch("/api/run", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+    });
+    const json = await resp.json();
+    if (!resp.ok) {
+      statusEl.textContent = "Error: " + json.error;
+      return;
+    }
+    DATA = json;
+    refreshDashboard();
+    populateLiveInputs();
+    statusEl.textContent = "Done.";
+  } catch (e) {
+    statusEl.textContent = "Error: " + e;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById("run-button").onclick = runModel;
+populateLiveInputs();
 """

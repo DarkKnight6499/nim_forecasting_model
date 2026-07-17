@@ -22,6 +22,28 @@ from model import alm_reports
 
 BASE_LABEL = "Base (flat)"
 
+OVERRIDABLE_POSITION_FIELDS = {"balance", "rate", "growth_rate_annual"}
+
+
+def _apply_position_overrides(positions, overrides):
+    """
+    overrides: {position_name: {field: value}}, field in OVERRIDABLE_POSITION_FIELDS.
+    Mutates `positions` in place. Raises ValueError naming the bad position/field on
+    anything else - this is the boundary between untrusted input (the live dashboard's
+    HTTP requests) and the rest of the model, so it fails loud rather than coercing.
+    """
+    if not overrides:
+        return
+    by_name = {p.name: p for p in positions}
+    for name, fields in overrides.items():
+        if name not in by_name:
+            raise ValueError(f"Unknown position: {name!r}")
+        position = by_name[name]
+        for field, value in fields.items():
+            if field not in OVERRIDABLE_POSITION_FIELDS:
+                raise ValueError(f"{field!r} is not overridable (allowed: {sorted(OVERRIDABLE_POSITION_FIELDS)})")
+            setattr(position, field, float(value))
+
 
 @dataclass
 class RunResults:
@@ -87,6 +109,9 @@ class RunResults:
     ftp_after_variance: Optional[float]
     ftp_calibrated_spreads: Optional[dict]
 
+    dividend_payout_ratio: float
+    custom_shock_bps: Optional[float]
+
 
 def search_bank(name_query):
     """Thin wrapper so main.py never imports data_sources directly."""
@@ -94,9 +119,16 @@ def search_bank(name_query):
 
 
 def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_dir="outputs",
-        ftp_recalibrate=False, deposit_history=None, backtest=None, backtest_fdic=None) -> RunResults:
+        ftp_recalibrate=False, deposit_history=None, backtest=None, backtest_fdic=None,
+        dividend_payout_ratio=None, custom_shock_bps=None, position_overrides=None) -> RunResults:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    dividend_payout_ratio = config.DIVIDEND_PAYOUT_RATIO if dividend_payout_ratio is None else dividend_payout_ratio
+
+    rate_scenarios = dict(config.RATE_SCENARIOS)
+    if custom_shock_bps is not None:
+        rate_scenarios["Custom shock"] = shocks.parallel(custom_shock_bps)
 
     positions = balance_sheet.load_positions()
     total_equity = None
@@ -107,6 +139,8 @@ def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_
             positions, total_equity, lcr_calibration = fdic_bank.calibrate_positions_to_bank(positions, bank_cert)
         except Exception as e:
             bank_cert_calibration_error = str(e)
+
+    _apply_position_overrides(positions, position_overrides)
 
     deposit_history_log_rows = None
     if deposit_history:
@@ -122,11 +156,11 @@ def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_
     )
 
     curve_paths = curve_scenarios.build_curve_scenarios(
-        base_curve, config.RATE_SCENARIOS, months, config.RAMP_MONTHS
+        base_curve, rate_scenarios, months, config.RAMP_MONTHS
     )
 
     combined_summary, details_by_scenario, cohort_details_by_scenario = engine.run_all_scenarios(
-        positions, curve_paths, initial_equity=total_equity
+        positions, curve_paths, initial_equity=total_equity, dividend_payout_ratio=dividend_payout_ratio
     )
 
     base_label = BASE_LABEL
@@ -135,7 +169,7 @@ def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_
     base_end_nim = base_summary.loc[base_summary["month"] == end_month, "nim"].iloc[0]
 
     sensitivity_rows = []
-    for label in config.RATE_SCENARIOS:
+    for label in rate_scenarios:
         scen_end_nim = combined_summary.loc[
             (combined_summary["scenario"] == label) & (combined_summary["month"] == end_month), "nim"
         ].iloc[0]
@@ -154,7 +188,7 @@ def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_
 
     shock_scenarios_scalar = {
         label: curve_scenarios.as_scenario_def(value).shift_fn(1.0)
-        for label, value in config.RATE_SCENARIOS.items()
+        for label, value in rate_scenarios.items()
     }
     duration_df, duration_summary, eve_df = alm_reports.compute_duration_gap(
         positions, benchmark_rate, shock_scenarios_scalar, total_equity=total_equity
@@ -282,4 +316,5 @@ def run(bank_cert=None, fred_api_key=None, months=config.HORIZON_MONTHS, output_
         fdic_snapshot_fin=fdic_snapshot_fin, fdic_backtest_message=fdic_backtest_message,
         ftp_recalibrate=ftp_recalibrate, ftp_before_variance=ftp_before_variance,
         ftp_after_variance=ftp_after_variance, ftp_calibrated_spreads=ftp_calibrated_spreads,
+        dividend_payout_ratio=dividend_payout_ratio, custom_shock_bps=custom_shock_bps,
     )

@@ -213,6 +213,19 @@ statement, and earnings-at-risk.
     fixed set of six IRRBB scenarios and isn't toggle-filtered, and CET1/FTP/AFS MTM are base-scenario
     reports already, so they're static. The joint LCR-NIM view and back-test attribution (whichever of
     `--backtest`/`--backtest-fdic` ran, if either) render as sortable tables.
+18. **Live dashboard** ([dashboard_server.py](dashboard_server.py), `python dashboard_server.py`) -
+    the same page, backed by a small local HTTP server instead of a fixed snapshot: a "Live inputs"
+    panel lets you edit forecast horizon, bank cert, dividend payout ratio, a free-form parallel rate
+    shock (bps), and any position's balance/rate/growth_rate_annual, then hit Run to re-execute
+    `pipeline.run(...)` with those overrides and refresh every chart/table in place - the same
+    mechanism you'd use to formalize an "add $X of incremental term deposits at rate Y" question into
+    an actual NIM/LCR answer, without leaving the browser. Position edits are diffed against the
+    last-served baseline (not blindly resent), so switching `bank_cert` to a different real bank's
+    balance sheet doesn't get clobbered by stale edits from the previous one.
+    `pipeline.run()`'s three new optional parameters (`dividend_payout_ratio`, `custom_shock_bps`,
+    `position_overrides`) all default to `None`/no-op, so `main.py`'s static path is unaffected.
+    Local, single-user tool: binds to `127.0.0.1` only, no auth - don't expose it beyond your own
+    machine.
 
 ## Data sources
 
@@ -276,6 +289,10 @@ python main.py --backtest sample_actuals.csv
 # Real out-of-sample back-test: calibrate as of 8 quarters ago, replay the realized Treasury
 # curve since then, and compare against what the bank actually went on to report
 python main.py --bank-cert 6384 --backtest-fdic 8
+
+# Live dashboard: edit inputs and re-run the model from the browser (localhost only)
+python dashboard_server.py --months 24
+# then open http://127.0.0.1:8765
 ```
 
 Outputs land in `outputs/`: `nim_forecast.xlsx` (NIM summary, sensitivity, rate sensitivity gap,
@@ -352,3 +369,9 @@ see "Extending" below for how to tighten this up.
   as the marginal cost of new deposit production.
 - Tune `refi_sensitivity` / `cpr_max` per `fixed_amortizing` position in `balance_sheet.yaml` to make
   the prepayment burnout effect stronger/weaker, or add it to other amortizing books.
+- The live dashboard's overridable position fields are deliberately narrow
+  (`pipeline.OVERRIDABLE_POSITION_FIELDS`: balance, rate, growth_rate_annual). The server side
+  (`pipeline.py`, `dashboard_server.py`) accepts any field you add to that set with no further
+  changes, but the dashboard's position table (`reporting/dashboard.py::_LIVE_INPUTS_PANEL_HTML` /
+  `_LIVE_SCRIPT_EXTRA_JS`) hardcodes those three columns, so widening the set also means adding a
+  column there.
