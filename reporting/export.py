@@ -4,7 +4,8 @@ import pandas as pd
 def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity_df=None,
                   gap_df=None, duration_df=None, duration_summary=None, eve_df=None,
                   liquidity_df=None, ear_df=None, ftp_monthly_df=None, ftp_detail_df=None,
-                  lcr_df=None, joint_view_df=None, mtm_detail_df=None, mtm_summary_df=None):
+                  lcr_df=None, joint_view_df=None, mtm_detail_df=None, mtm_summary_df=None,
+                  full_reval_eve_df=None, backtest_df=None):
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         pivot = combined_summary_df.pivot(index="month", columns="scenario", values="nim") * 100
         pivot.round(3).to_excel(writer, sheet_name="NIM Summary (%)")
@@ -49,6 +50,12 @@ def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity
 
         if mtm_summary_df is not None:
             mtm_summary_df.round(2).to_excel(writer, sheet_name="AFS MTM Buffer", index=False)
+
+        if full_reval_eve_df is not None:
+            full_reval_eve_df.round(2).to_excel(writer, sheet_name="EVE Full Revaluation", index=False)
+
+        if backtest_df is not None:
+            backtest_df.round(2).to_excel(writer, sheet_name="Backtest vs Actuals", index=False)
 
         for label, detail_df in details_by_scenario.items():
             sheet = f"Buckets - {label}"[:31]

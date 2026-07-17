@@ -35,6 +35,16 @@ def twist(pivot_years: float, short_bps: float, long_bps: float):
     return shift_fn
 
 
+def short_up(bps: float = 100, fade_years: float = 2.0):
+    """Short end moves by bps, fading linearly to 0 by fade_years (one of the standard six IRRBB scenarios)."""
+    return _linear_in_tenor(bps, 0.0, from_years=0.0, to_years=fade_years)
+
+
+def short_down(bps: float = 100, fade_years: float = 2.0):
+    """Short end moves by -bps, fading linearly to 0 by fade_years (one of the standard six IRRBB scenarios)."""
+    return _linear_in_tenor(-bps, 0.0, from_years=0.0, to_years=fade_years)
+
+
 def custom(shifts_by_tenor: dict):
     """Interpolated shift between explicit (tenor_years -> bps) points."""
     import numpy as np

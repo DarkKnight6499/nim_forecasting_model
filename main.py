@@ -25,9 +25,10 @@ import pandas as pd
 
 import config
 from curve import scenarios as curve_scenarios
+from curve import shocks
 from core import balance_sheet, engine
 from core.ftp import aggregate as ftp
-from core import lcr, mtm, joint_view
+from core import lcr, mtm, joint_view, eve
 from data_sources import fred_rates, fdic_bank, treasury_curve
 from model import alm_reports
 from reporting import charts, export
@@ -45,6 +46,9 @@ def main():
     parser.add_argument("--deposit-history", type=str, default=None,
                          help="CSV (month, product, balance) of deposit history; estimates behavioral "
                               "decay parameters per product and overrides the YAML assumptions")
+    parser.add_argument("--backtest", type=str, default=None,
+                         help="CSV (month, actual_nii, actual_avg_earning_assets, actual_nim) to "
+                              "back-test the base scenario forecast against")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -148,8 +152,25 @@ def main():
           f"D(liabilities)={duration_summary['duration_liabilities_years']:.2f}y  "
           f"Duration Gap={duration_summary['duration_gap_years']:.2f}y "
           f"(equity basis: ${duration_summary['equity_used']:,.0f})")
-    print("\n=== EVE Sensitivity ===")
+    print("\n=== EVE Sensitivity (linear duration approximation) ===")
     print(eve_df.assign(delta_eve_pct_equity=(eve_df["delta_eve_pct_equity"] * 100).round(2)).to_string(index=False))
+
+    # ---------------- Full-revaluation EVE (standard six IRRBB scenarios) ----------------
+    irrbb_scenarios = {
+        "Parallel +200bps": shocks.parallel(200),
+        "Parallel -200bps": shocks.parallel(-200),
+        "Steepener": shocks.steepener(-50, 100),
+        "Flattener": shocks.flattener(100, -50),
+        "Short rate up": shocks.short_up(100),
+        "Short rate down": shocks.short_down(100),
+    }
+    full_reval_eve_df = eve.compute_eve_sensitivity(positions, base_curve, irrbb_scenarios, total_equity=total_equity)
+    print("\n=== Full-Revaluation EVE Sensitivity (standard six IRRBB scenarios) ===")
+    print(full_reval_eve_df.assign(
+        delta_eve_pct_equity_full_reval=(full_reval_eve_df["delta_eve_pct_equity_full_reval"] * 100).round(2)
+    ).round(0).to_string(index=False))
+    print("  (compare Parallel +/-200bps here against the linear duration approximation above for convexity:")
+    print("   full revaluation captures the price-yield curve's curvature, the linear approximation doesn't.)")
 
     ear_horizons = tuple(h for h in (3, 6, 12, 24) if h <= args.months)
     ear_df = alm_reports.compute_earnings_at_risk(combined_summary, base_label, horizons=ear_horizons)
@@ -218,6 +239,20 @@ def main():
         print(f"  Month {m:>2}: unrealized gain=${row['total_unrealized_gain']:,.0f}  "
               f"buffer limit=${row['buffer_limit']:,.0f}  buffer available=${row['buffer_available']:,.0f}")
 
+    # ---------------- Back-test vs actuals ----------------
+    backtest_df = None
+    if args.backtest:
+        from core import backtest as backtest_module
+        actuals_df = pd.read_csv(args.backtest)
+        backtest_df = backtest_module.compute_backtest(base_summary, actuals_df)
+        print(f"\n=== Back-test vs {args.backtest} (base scenario) ===")
+        print(backtest_df.round(2).head(6).to_string(index=False))
+        print("...")
+        print(f"  Cumulative NII error: ${backtest_df['nii_error'].sum():,.0f}  "
+              f"(rate variance: ${backtest_df['rate_variance'].sum():,.0f}, "
+              f"volume variance: ${backtest_df['volume_variance'].sum():,.0f}, "
+              f"residual/unmodellable: ${backtest_df['residual_unmodellable'].sum():,.0f})")
+
     if args.ftp_recalibrate:
         from core import ftp_calibration
         from curve.historical_cycles import HISTORICAL_CYCLES
@@ -252,6 +287,7 @@ def main():
         eve_df=eve_df, liquidity_df=liquidity_df, ear_df=ear_df,
         ftp_monthly_df=ftp_monthly_df, ftp_detail_df=ftp_detail_df,
         lcr_df=lcr_df, joint_view_df=joint_view_df, mtm_detail_df=mtm_detail_df, mtm_summary_df=mtm_summary_df,
+        full_reval_eve_df=full_reval_eve_df, backtest_df=backtest_df,
     )
 
     print(f"\nOutputs written to {out_dir.resolve()}")
