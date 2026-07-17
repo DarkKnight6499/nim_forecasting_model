@@ -3,6 +3,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 
+import config
+
 
 def plot_nim_by_scenario(combined_summary_df, out_path):
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -227,3 +229,24 @@ def plot_liquidity_gap(liquidity_df, out_path, tolerance_pct=None):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+
+
+def generate_all(r):
+    """Generates every chart for a completed pipeline.RunResults, into r.output_dir."""
+    out_dir = r.output_dir
+    plot_nim_by_scenario(r.combined_summary, out_dir / "nim_by_scenario.png")
+    plot_yield_cost_spread(r.base_summary, out_dir / "base_yield_cost_spread.png")
+    plot_balance_sheet_mix(r.details_by_scenario[r.base_label], out_dir / "balance_sheet_mix.png", month=0)
+    plot_rate_sensitivity_gap(r.gap_df, out_dir / "rate_sensitivity_gap.png")
+    plot_eve_sensitivity(r.eve_df, out_dir / "eve_sensitivity.png")
+    plot_liquidity_gap(r.liquidity_df, out_dir / "structural_liquidity.png",
+                        tolerance_pct=config.LIQUIDITY_GAP_TOLERANCE_PCT_ASSETS)
+    plot_earnings_at_risk(r.nii_delta_df, out_dir / "earnings_at_risk.png")
+    plot_ftp_alm_pnl(r.ftp_monthly_df, out_dir / "ftp_alm_pnl.png")
+    plot_lcr_by_scenario(r.lcr_df, out_dir / "lcr_by_scenario.png", regulatory_min=config.LCR_REGULATORY_MIN,
+                          ras_threshold=config.LCR_RAS_THRESHOLD, internal_target=config.LCR_INTERNAL_TARGET)
+    plot_lcr_stressed(r.base_lcr, out_dir / "lcr_stressed.png", regulatory_min=config.LCR_REGULATORY_MIN,
+                       ras_threshold=config.LCR_RAS_THRESHOLD, internal_target=config.LCR_INTERNAL_TARGET)
+    plot_nsfr_by_scenario(r.nsfr_df, out_dir / "nsfr_by_scenario.png", regulatory_min=config.NSFR_REGULATORY_MIN)
+    plot_cet1_by_scenario(r.capital_df, out_dir / "cet1_by_scenario.png", regulatory_min=config.CET1_REGULATORY_MIN,
+                           buffered_min=config.CET1_BUFFERED_MIN, internal_target=config.CET1_INTERNAL_TARGET)

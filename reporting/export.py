@@ -70,3 +70,16 @@ def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity
         for label, detail_df in details_by_scenario.items():
             sheet = f"Buckets - {label}"[:31]
             detail_df.round(2).to_excel(writer, sheet_name=sheet, index=False)
+
+
+def export_from_results(r):
+    """export_excel, fed from a completed pipeline.RunResults."""
+    export_excel(
+        r.output_dir / "nim_forecast.xlsx", r.combined_summary, r.details_by_scenario, r.sensitivity_df,
+        gap_df=r.gap_df, duration_df=r.duration_df, duration_summary=r.duration_summary,
+        eve_df=r.eve_df, liquidity_df=r.liquidity_df, ear_df=r.ear_df,
+        ftp_monthly_df=r.ftp_monthly_df, ftp_detail_df=r.ftp_detail_df,
+        lcr_df=r.lcr_df, joint_view_df=r.joint_view_df, mtm_detail_df=r.mtm_detail_df, mtm_summary_df=r.mtm_summary_df,
+        full_reval_eve_df=r.full_reval_eve_df, backtest_df=r.backtest_df, fdic_backtest_df=r.fdic_backtest_df,
+        nsfr_df=r.nsfr_df, capital_df=r.capital_df,
+    )

@@ -195,7 +195,24 @@ statement, and earnings-at-risk.
     Real error here is expected and is the point: the model doesn't know the bank's actual future
     growth, mix shifts, or pricing decisions, so read the attribution the same way as (13) rather than
     tuning assumptions to make it look better.
-15. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
+15. **Orchestration** ([pipeline.py](pipeline.py)) - `pipeline.run(...)` builds every DataFrame this
+    page describes and returns one `RunResults` dataclass; it prints nothing and writes no files.
+    `main.py` is a thin CLI wrapper (argparse, then one call into `pipeline.run`), `reporting/console.py`
+    holds every console report as a function of `RunResults` (one function per report, e.g.
+    `print_lcr`, `print_nsfr`), and `reporting/charts.py`/`export.py` consume the same `RunResults` for
+    charts and the Excel workbook. A GitHub Actions workflow
+    ([.github/workflows/tests.yml](.github/workflows/tests.yml)) runs the full test suite plus an
+    offline smoke run (`python main.py --months 6`, no API keys needed) on every push and PR.
+16. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report), 12 charts, and an
+    interactive HTML dashboard (below).
+17. **Interactive dashboard** ([reporting/dashboard.py](reporting/dashboard.py),
+    `outputs/dashboard.html`) - one self-contained HTML file per run: inline CSS/JS, every report's data
+    embedded as a single JSON blob, charts drawn as inline SVG by the embedded JS (no CDN, no build
+    step, no framework - it opens straight from disk). A scenario multi-toggle filters the NIM/LCR/NSFR
+    charts together (they share `config.RATE_SCENARIOS`' labels); full-revaluation EVE uses its own
+    fixed set of six IRRBB scenarios and isn't toggle-filtered, and CET1/FTP/AFS MTM are base-scenario
+    reports already, so they're static. The joint LCR-NIM view and back-test attribution (whichever of
+    `--backtest`/`--backtest-fdic` ran, if either) render as sortable tables.
 
 ## Data sources
 
@@ -265,7 +282,8 @@ Outputs land in `outputs/`: `nim_forecast.xlsx` (NIM summary, sensitivity, rate 
 duration detail/summary, linear and full-revaluation EVE sensitivity, structural liquidity,
 earnings-at-risk, FTP/ALM desk P&L, LCR, NSFR, CET1 capital, joint LCR-NIM view, AFS MTM, back-test vs
 actuals (either or both of the CSV-driven and FDIC real-actuals flavors, if requested), and full
-per-scenario bucket detail - one sheet each) plus 12 charts.
+per-scenario bucket detail - one sheet each) plus 12 charts and `dashboard.html` (self-contained,
+open it directly in a browser - see "How it works" (17)).
 
 ## FTP policy spread calibration
 
