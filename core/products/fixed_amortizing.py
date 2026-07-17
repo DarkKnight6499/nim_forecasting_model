@@ -3,6 +3,9 @@ Fixed-rate amortizing mechanics: vintage cohorts, each locked at its
 origination coupon. Runs off at
   min(cpr_max, cpr_annual + refi_sensitivity * max(0, cohort.rate - new_production_rate))
 Runoff + growth forms a new cohort priced at index_rate(index, tenor_years) + spread.
+growth_rate_annual may be negative (the book shrinks faster than scheduled
+runoff/CPR alone); new production is floored at zero rather than growth
+being floored, so a negative growth still reduces replacement volume.
 """
 
 from core.indices import index_rate
@@ -33,7 +36,7 @@ def step(p, cohorts, curve_t, t):
 
     total_balance = sum(c.balance for c in cohorts)
     growth = total_balance * (p.growth_rate_annual / 12)
-    new_production = total_runoff + max(0.0, growth)
+    new_production = max(0.0, total_runoff + growth)
     if new_production > 0:
         cohorts.append(Cohort(balance=new_production, rate=new_prod_rate, day0_rate=new_prod_rate,
                                day0_index_value=0.0, origination_month=t, phase=0))

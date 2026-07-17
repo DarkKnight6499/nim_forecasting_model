@@ -17,7 +17,12 @@ MCLR-indexed position reprices that month:
 Balance sheet identity (assets = liabilities + equity) is enforced from
 month 1 onward: the `plug` position absorbs a funding shortfall, the
 `cash_sink` position absorbs a surplus. Both must be `variable` positions
-(core/balance_sheet.py validates this).
+(core/balance_sheet.py validates this). Each month's adjustment nets
+against the OTHER position's existing balance first (a surplus repays
+outstanding plug borrowings before growing the cash sink; a shortfall draws
+down existing sink cash before growing plug borrowings), so a scenario that
+flips between deficit and surplus does not leave both growing side by side
+forever.
 """
 
 import copy
@@ -161,14 +166,28 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
 
         # Balance sheet identity (month 1+): plug/cash_sink are variable positions,
         # so the adjustment lands directly on their cohort list, then re-aggregates.
+        # Net against the opposite position's existing balance first (see module
+        # docstring) so the two don't both grow forever once the gap flips sign.
         if t > 0:
             total_assets = sum(new_balances[p.name] for p in positions if p.side == "asset")
             total_liab = sum(new_balances[p.name] for p in positions if p.side == "liability")
             funding_gap = total_assets - total_liab - equity
-            adjust_name = plug_name if funding_gap >= 0 else sink_name
-            adjust_amount = funding_gap if funding_gap >= 0 else -funding_gap
-            cohort_state[adjust_name][0].balance += adjust_amount
-            new_balances[adjust_name], new_rates[adjust_name] = _aggregate_cohorts(cohort_state[adjust_name])
+
+            plug_balance = cohort_state[plug_name][0].balance
+            sink_balance = cohort_state[sink_name][0].balance
+
+            if funding_gap >= 0:
+                sink_paydown = min(sink_balance, funding_gap)
+                cohort_state[sink_name][0].balance -= sink_paydown
+                cohort_state[plug_name][0].balance += funding_gap - sink_paydown
+            else:
+                surplus = -funding_gap
+                plug_paydown = min(plug_balance, surplus)
+                cohort_state[plug_name][0].balance -= plug_paydown
+                cohort_state[sink_name][0].balance += surplus - plug_paydown
+
+            new_balances[plug_name], new_rates[plug_name] = _aggregate_cohorts(cohort_state[plug_name])
+            new_balances[sink_name], new_rates[sink_name] = _aggregate_cohorts(cohort_state[sink_name])
 
         for p in positions:
             if p.category_type == "fixed_amortizing":

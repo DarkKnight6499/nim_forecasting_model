@@ -5,6 +5,9 @@ current curve tenor; the rest is a funding outflow (the engine's plug/
 cash_sink absorbs it via the balance sheet identity next month, same as any
 other balance shortfall). early_withdrawal_annual applies extra runoff to
 the not-yet-matured (surviving) balance, on top of scheduled maturities.
+growth_rate_annual may be negative (renewed volume shrinks faster than
+non-renewal alone); renewed is floored at zero rather than growth being
+floored, so a negative growth still reduces the rolled-over amount.
 """
 
 from core.indices import index_rate
@@ -13,7 +16,7 @@ from core.indices import index_rate
 def step(p, prev_balance, prev_rate, curve_t, t):
     maturing = prev_balance / p.ladder_months
     growth = prev_balance * (p.growth_rate_annual / 12)
-    renewed = maturing * p.renewal_rate + max(0.0, growth)
+    renewed = max(0.0, maturing * p.renewal_rate + growth)
     new_rate_piece = index_rate(p.index, curve_t, tenor_years=p.origination_tenor_years) + p.spread
     if p.rate_floor is not None:
         new_rate_piece = max(new_rate_piece, p.rate_floor)
