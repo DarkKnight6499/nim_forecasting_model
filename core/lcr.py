@@ -26,6 +26,12 @@ funding/repo, other contractual/contingent obligations) - see
 data_sources/lcr_disclosures.py, used only when calibrating to a bank with a
 real disclosed figure. Zero for the synthetic default book and any
 --bank-cert run without a disclosure fixture.
+
+compute_lcr's stressed parameter scales each outflow category's base factor
+by config.LCR_STRESS_MULTIPLIERS (capped at 1.0, since a factor can't stress
+past 100% of the balance) before computing outflows; HQLA and inflows are
+unaffected (the stress scenario this simplification represents is a deposit
+run, not an HQLA haircut or a loan-repayment shock).
 """
 
 import numpy as np
@@ -59,13 +65,15 @@ def compute_hqla(positions, balances):
             "l2_total_capped": l2_total_capped, "hqla": l1 + l2_total_capped, "hqla_breakdown": hqla_breakdown}
 
 
-def compute_outflows(positions, balances):
+def compute_outflows(positions, balances, stressed=False):
     total = 0.0
     breakdown = {}
     for p in positions:
         if p.side != "liability" or p.lcr_outflow_category is None:
             continue
         factor = config.LCR_OUTFLOW_FACTORS[p.lcr_outflow_category]
+        if stressed:
+            factor = min(1.0, factor * config.LCR_STRESS_MULTIPLIERS.get(p.lcr_outflow_category, 1.0))
         outflow_base = balances[p.name] / p.ladder_months if p.category_type == "laddered" else balances[p.name]
         weighted = outflow_base * factor
         breakdown[p.name] = weighted
@@ -86,15 +94,17 @@ def compute_inflows(positions, balances):
     return total, breakdown
 
 
-def compute_lcr(positions, balances, additional_outflow=0.0, outflow_adjustment_pct=1.0):
+def compute_lcr(positions, balances, additional_outflow=0.0, outflow_adjustment_pct=1.0, stressed=False):
     """
     balances: {position.name: balance $} for the month being evaluated.
     outflow_adjustment_pct: the modified-LCR outflow adjustment percentage
     some banks are subject to under the tailoring rules (< 1.0 reduces total
     net outflow by a fixed percentage); 1.0 for the standard, unmodified LCR.
+    stressed: apply config.LCR_STRESS_MULTIPLIERS on top of the base outflow
+    factors (see module docstring); False reproduces the standard LCR exactly.
     """
     hqla_detail = compute_hqla(positions, balances)
-    gross_outflows, outflow_breakdown = compute_outflows(positions, balances)
+    gross_outflows, outflow_breakdown = compute_outflows(positions, balances, stressed=stressed)
     gross_outflows += additional_outflow
     gross_inflows, inflow_breakdown = compute_inflows(positions, balances)
 

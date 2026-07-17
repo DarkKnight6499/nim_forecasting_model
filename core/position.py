@@ -55,6 +55,8 @@ class Position:
     lcr_outflow_category: Optional[str] = None             # liabilities: config.LCR_OUTFLOW_FACTORS key, see core/lcr.py
     accounting: Optional[str] = None                         # investment assets: "HTM" | "AFS", see core/mtm.py
     calibration_category: Optional[str] = None                # one of core.balance_sheet.CALIBRATION_CATEGORIES, see data_sources/fdic_bank.py
+    rwa_density: float = 0.0                                    # assets: standardized-approach RWA / balance, see core/capital.py (0 for liabilities/equity, irrelevant there)
+    rsf_factor_override: Optional[float] = None                   # assets: NSFR required-stable-funding factor override (see core/nsfr.py); None derives it from the position's tags instead
 
     def _ladder_months_for_duration(self) -> int:
         """Uniform-ladder length whose average life ((n+1)/2 months) equals behavioral_duration_years."""

@@ -24,6 +24,7 @@ positions:
     cash_sink: true
     hqla_level: L1
     calibration_category: cash
+    rwa_density: 0.00
 
   # ---- HQLA investment book (was one "Investment securities" line; split
   # for LCR classification - see core/lcr.py). accounting: AFS positions get
@@ -39,6 +40,7 @@ positions:
     growth_rate_annual: 0.01
     hqla_level: L1
     calibration_category: cash
+    rwa_density: 0.00
 
   - name: "Treasuries"
     side: asset
@@ -54,6 +56,7 @@ positions:
     accounting: AFS
     ftp_method: pooled_replicating
     calibration_category: securities
+    rwa_density: 0.00  # sovereign (Treasuries)
 
   - name: "Agency MBS"
     side: asset
@@ -69,6 +72,7 @@ positions:
     accounting: HTM
     ftp_method: pooled_replicating
     calibration_category: securities
+    rwa_density: 0.20  # agency MBS
 
   - name: "Municipal & corporate bonds"
     side: asset
@@ -84,6 +88,7 @@ positions:
     accounting: AFS
     ftp_method: pooled_replicating
     calibration_category: securities
+    rwa_density: 0.50  # munis
 
   # MCLR-indexed (core/indices.py::compute_mclr). Quarterly reset
   # (reset_frequency_months=3) is staggered across 3 cohorts by the engine.
@@ -98,6 +103,7 @@ positions:
     rate_floor: 0.03
     reset_frequency_months: 3
     calibration_category: loans
+    rwa_density: 1.00  # corporate/C&I
 
   - name: "CRE loans (fixed)"
     side: asset
@@ -111,6 +117,7 @@ positions:
     cpr_max: 0.12  # refi_sensitivity=0: no rate-driven burnout
     growth_rate_annual: 0.03
     calibration_category: loans
+    rwa_density: 1.00  # CRE
 
   # refi_sensitivity > 0: CPR rises with cohort.rate - new_production_rate, capped at cpr_max.
   - name: "Residential mortgage"
@@ -126,6 +133,8 @@ positions:
     cpr_max: 0.40
     growth_rate_annual: 0.01
     calibration_category: loans
+    rwa_density: 0.50  # residential mortgage
+    rsf_factor_override: 0.65  # NSFR: residential mortgages get a preferential RSF vs the general performing-loan rate (see core/nsfr.py)
 
   - name: "Consumer / other loans"
     side: asset
@@ -139,6 +148,7 @@ positions:
     cpr_max: 0.20  # refi_sensitivity=0
     growth_rate_annual: 0.02
     calibration_category: loans
+    rwa_density: 0.75  # regulatory-retail consumer loans (standardized approach)
 
   # ---- Interest-bearing liabilities ----
   # behavioral_duration_years: EVE duration + gap-report repricing ladder.

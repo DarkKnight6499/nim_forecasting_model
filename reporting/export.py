@@ -5,7 +5,8 @@ def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity
                   gap_df=None, duration_df=None, duration_summary=None, eve_df=None,
                   liquidity_df=None, ear_df=None, ftp_monthly_df=None, ftp_detail_df=None,
                   lcr_df=None, joint_view_df=None, mtm_detail_df=None, mtm_summary_df=None,
-                  full_reval_eve_df=None, backtest_df=None, fdic_backtest_df=None):
+                  full_reval_eve_df=None, backtest_df=None, fdic_backtest_df=None,
+                  nsfr_df=None, capital_df=None):
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
         pivot = combined_summary_df.pivot(index="month", columns="scenario", values="nim") * 100
         pivot.round(3).to_excel(writer, sheet_name="NIM Summary (%)")
@@ -59,6 +60,12 @@ def export_excel(out_path, combined_summary_df, details_by_scenario, sensitivity
 
         if fdic_backtest_df is not None:
             fdic_backtest_df.round(2).to_excel(writer, sheet_name="FDIC Real-Actuals Backtest", index=False)
+
+        if nsfr_df is not None:
+            nsfr_df.round(4).to_excel(writer, sheet_name="NSFR", index=False)
+
+        if capital_df is not None:
+            capital_df.round(4).to_excel(writer, sheet_name="CET1 Capital", index=False)
 
         for label, detail_df in details_by_scenario.items():
             sheet = f"Buckets - {label}"[:31]

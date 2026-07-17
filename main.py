@@ -33,7 +33,7 @@ from curve import scenarios as curve_scenarios
 from curve import shocks
 from core import balance_sheet, engine
 from core.ftp import aggregate as ftp
-from core import lcr, mtm, joint_view, eve
+from core import lcr, mtm, joint_view, eve, nsfr, capital
 from data_sources import fred_rates, fdic_bank, treasury_curve
 from model import alm_reports
 from reporting import charts, export
@@ -216,13 +216,15 @@ def main():
         end_pnl = monthly.loc[monthly["month"] == monthly["month"].max(), "alm_desk_pnl"].iloc[0]
         print(f"  {label:>12}: month 0 = ${start_pnl:,.0f}/mo   ->   final month = ${end_pnl:,.0f}/mo")
 
-    # ---------------- Liquidity Coverage Ratio (LCR) ----------------
+    # ---------------- Liquidity Coverage Ratio (LCR), base and stressed ----------------
     lcr_rows = []
     for label, detail_df in details_by_scenario.items():
         for month in sorted(detail_df["month"].unique()):
             balances = detail_df.loc[detail_df["month"] == month].set_index("bucket")["balance"].to_dict()
             result = lcr.compute_lcr(positions, balances, **lcr_calibration)
+            stressed_result = lcr.compute_lcr(positions, balances, **lcr_calibration, stressed=True)
             lcr_rows.append({"scenario": label, "month": month, "lcr": result["lcr"],
+                              "lcr_stressed": stressed_result["lcr"],
                               "hqla": result["hqla"], "net_outflows": result["net_outflows"]})
     lcr_df = pd.DataFrame(lcr_rows)
 
@@ -232,7 +234,37 @@ def main():
           f"internal target {config.LCR_INTERNAL_TARGET:.0%})")
     for m in [0, args.months // 2, end_month]:
         row = base_lcr[base_lcr["month"] == m].iloc[0]
-        print(f"  Month {m:>2}: LCR={row['lcr']:.1%}  HQLA=${row['hqla']:,.0f}  net 30d outflows=${row['net_outflows']:,.0f}")
+        print(f"  Month {m:>2}: LCR={row['lcr']:.1%}  (stressed: {row['lcr_stressed']:.1%})  "
+              f"HQLA=${row['hqla']:,.0f}  net 30d outflows=${row['net_outflows']:,.0f}")
+
+    # ---------------- Net Stable Funding Ratio (NSFR) ----------------
+    nsfr_rows = []
+    for label, detail_df in details_by_scenario.items():
+        summary = combined_summary[combined_summary["scenario"] == label]
+        for month in sorted(detail_df["month"].unique()):
+            balances = detail_df.loc[detail_df["month"] == month].set_index("bucket")["balance"].to_dict()
+            equity_t = summary.loc[summary["month"] == month, "equity"].iloc[0]
+            result = nsfr.compute_nsfr(positions, balances, equity_t)
+            nsfr_rows.append({"scenario": label, "month": month, "nsfr": result["nsfr"],
+                               "asf": result["asf"], "rsf": result["rsf"]})
+    nsfr_df = pd.DataFrame(nsfr_rows)
+
+    base_nsfr = nsfr_df[nsfr_df["scenario"] == base_label]
+    print(f"\n=== Net Stable Funding Ratio (base scenario) === (target: reg min {config.NSFR_REGULATORY_MIN:.0%})")
+    for m in [0, args.months // 2, end_month]:
+        row = base_nsfr[base_nsfr["month"] == m].iloc[0]
+        print(f"  Month {m:>2}: NSFR={row['nsfr']:.1%}  ASF=${row['asf']:,.0f}  RSF=${row['rsf']:,.0f}")
+
+    # ---------------- Capital-lite: CET1 ratio (base scenario) ----------------
+    capital_df = capital.compute_cet1_by_month(positions, details_by_scenario[base_label], base_summary)
+    capital_df.insert(0, "scenario", base_label)
+    print(f"\n=== CET1 Ratio (base scenario) === "
+          f"(target: reg min {config.CET1_REGULATORY_MIN:.1%}, buffered min {config.CET1_BUFFERED_MIN:.1%}, "
+          f"internal target {config.CET1_INTERNAL_TARGET:.1%}; dividend payout {config.DIVIDEND_PAYOUT_RATIO:.0%})")
+    for m in [0, args.months // 2, end_month]:
+        row = capital_df[capital_df["month"] == m].iloc[0]
+        print(f"  Month {m:>2}: CET1 ratio={row['cet1_ratio']:.2%}  RWA=${row['rwa']:,.0f}  "
+              f"CET1 capital=${row['cet1_capital']:,.0f}")
 
     # ---------------- Joint LCR-NIM view (base scenario, month 0) ----------------
     joint_view_df = joint_view.compute_joint_view(
@@ -317,6 +349,11 @@ def main():
     charts.plot_ftp_alm_pnl(ftp_monthly_df, out_dir / "ftp_alm_pnl.png")
     charts.plot_lcr_by_scenario(lcr_df, out_dir / "lcr_by_scenario.png", regulatory_min=config.LCR_REGULATORY_MIN,
                                  ras_threshold=config.LCR_RAS_THRESHOLD, internal_target=config.LCR_INTERNAL_TARGET)
+    charts.plot_lcr_stressed(base_lcr, out_dir / "lcr_stressed.png", regulatory_min=config.LCR_REGULATORY_MIN,
+                              ras_threshold=config.LCR_RAS_THRESHOLD, internal_target=config.LCR_INTERNAL_TARGET)
+    charts.plot_nsfr_by_scenario(nsfr_df, out_dir / "nsfr_by_scenario.png", regulatory_min=config.NSFR_REGULATORY_MIN)
+    charts.plot_cet1_by_scenario(capital_df, out_dir / "cet1_by_scenario.png", regulatory_min=config.CET1_REGULATORY_MIN,
+                                  buffered_min=config.CET1_BUFFERED_MIN, internal_target=config.CET1_INTERNAL_TARGET)
 
     export.export_excel(
         out_dir / "nim_forecast.xlsx", combined_summary, details_by_scenario, sensitivity_df,
@@ -325,14 +362,15 @@ def main():
         ftp_monthly_df=ftp_monthly_df, ftp_detail_df=ftp_detail_df,
         lcr_df=lcr_df, joint_view_df=joint_view_df, mtm_detail_df=mtm_detail_df, mtm_summary_df=mtm_summary_df,
         full_reval_eve_df=full_reval_eve_df, backtest_df=backtest_df, fdic_backtest_df=fdic_backtest_df,
+        nsfr_df=nsfr_df, capital_df=capital_df,
     )
 
     print(f"\nOutputs written to {out_dir.resolve()}")
-    print("  - nim_forecast.xlsx (NIM, gap, duration/EVE, liquidity, earnings-at-risk, FTP/ALM P&L, LCR,")
-    print("    joint LCR-NIM view, AFS MTM, back-test(s), bucket detail)")
+    print("  - nim_forecast.xlsx (NIM, gap, duration/EVE, liquidity, earnings-at-risk, FTP/ALM P&L, LCR, NSFR,")
+    print("    CET1 capital, joint LCR-NIM view, AFS MTM, back-test(s), bucket detail)")
     print("  - nim_by_scenario.png, base_yield_cost_spread.png, balance_sheet_mix.png,")
     print("    rate_sensitivity_gap.png, eve_sensitivity.png, structural_liquidity.png, ftp_alm_pnl.png,")
-    print("    lcr_by_scenario.png")
+    print("    lcr_by_scenario.png, lcr_stressed.png, nsfr_by_scenario.png, cet1_by_scenario.png")
 
 
 if __name__ == "__main__":

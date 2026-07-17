@@ -122,23 +122,47 @@ statement, and earnings-at-risk.
    current month's maturing slice, since only cash actually due within 30 days counts. Tracked monthly
    across every scenario (`--ftp-recalibrate`-style before/after isn't needed here; LCR just evolves
    with the balance sheet) and charted against `config.LCR_REGULATORY_MIN`/`RAS_THRESHOLD`/`INTERNAL_TARGET`.
-7. **Joint LCR-NIM view** ([core/joint_view.py](core/joint_view.py)) - one table, per position: NIM
+   `compute_lcr(stressed=True)` additionally scales each outflow category's factor by
+   `config.LCR_STRESS_MULTIPLIERS` (capped at 100%) for a simple liquidity stress view, reported
+   alongside the base LCR every month and charted against the same threshold lines
+   (`lcr_stressed.png`, base rate scenario) - by construction, stressed LCR never exceeds base LCR.
+7. **Net Stable Funding Ratio** ([core/nsfr.py](core/nsfr.py)) - NSFR = ASF / RSF, Basel III (BCBS295)
+   standard factors reusing tags positions already carry (`hqla_level`, `lcr_outflow_category`,
+   `calibration_category`) plus `category_type`/`ladder_months`: capital and stable/less-stable retail
+   deposits get flat ASF factors, laddered liabilities (term deposits, term wholesale funding) blend the
+   under-1y and >=1y factors by the fraction of their maturity ladder beyond 12 months. On the asset
+   side, HQLA gets its RSF haircut (cash 0%, L1 5%, L2A 15%, L2B 50%), performing loans blend by average
+   life (`1/cpr_annual`, or a flat under-1y factor for variable-rate/revolving loans with no
+   amortization schedule), and `rsf_factor_override` (set on the residential mortgage position) gives
+   Basel's preferential mortgage RSF factor without a name lookup. Tracked monthly per scenario, charted
+   against `config.NSFR_REGULATORY_MIN`.
+8. **Capital-lite (CET1 ratio)** ([core/capital.py](core/capital.py)) - a standardized-approach RWA
+   proxy (`Position.rwa_density`, set per position in balance_sheet.yaml: sovereign/cash 0%, agency MBS
+   20%, residential mortgage/munis 50%, regulatory-retail consumer loans 75%, corporate/C&I/CRE 100%)
+   divided into the equity path the engine already tracks: `cet1_ratio = CET1 / RWA`. Each month's NII
+   is split between retained equity and dividends by `config.DIVIDEND_PAYOUT_RATIO` (which supersedes
+   the old always-fully-retained `RETENTION_RATIO` - one dividend-policy knob, not two ways to say the
+   same thing), so a higher payout ratio visibly slows CET1 accretion. Charted against
+   `CET1_REGULATORY_MIN`/`BUFFERED_MIN`/`INTERNAL_TARGET`. This is illustrative, not a real regulatory
+   capital calculation: real RWA also includes market and operational risk components (trading book,
+   op-risk capital) this stylized balance sheet has no position to represent.
+9. **Joint LCR-NIM view** ([core/joint_view.py](core/joint_view.py)) - one table, per position: NIM
    contribution, FTP customer margin, and LCR impact (HQLA contribution for assets, weighted outflow
    contribution for liabilities) side by side, ranked by margin per unit of liquidity cost - which
    products earn the most NIM per dollar of liquidity consumed.
-8. **Unified cashflow engine** ([core/cashflows.py](core/cashflows.py)) - one canonical
+10. **Unified cashflow engine** ([core/cashflows.py](core/cashflows.py)) - one canonical
    coupon-bearing cashflow generator (principal + accrued interest), consumed by both AFS MTM and
    full-revaluation EVE below. Each position's z-spread (a constant spread over the discount curve) is
    solved once so PV equals its book balance at the base curve - the spread has an economic reading
    (the position's credit/liquidity margin over Treasuries), unlike a raw calibration ratio.
-9. **AFS mark-to-market** ([core/mtm.py](core/mtm.py)) - `accounting: AFS` positions (Treasuries,
+11. **AFS mark-to-market** ([core/mtm.py](core/mtm.py)) - `accounting: AFS` positions (Treasuries,
    Municipal & corporate bonds) get a monthly unrealized gain/loss by revaluing their remaining
    cashflow schedule off the scenario curve at their solved z-spread; `accounting: HTM` (Agency MBS)
    accrues only and never shows an MTM figure. Month-0 gain is $0 by construction (the z-spread's
    calibration point), so every later month's gain reflects the curve's movement since then. The MTM
    buffer report caps unrealized gains available for sale at `config.TRADING_LIMIT_PCT` of the HTM book
    (an RBI-style trading-limit convention).
-10. **Full-revaluation EVE** ([core/eve.py](core/eve.py)) - EVE = PV(asset cashflows) - PV(liability
+12. **Full-revaluation EVE** ([core/eve.py](core/eve.py)) - EVE = PV(asset cashflows) - PV(liability
    cashflows), on the same coupon-bearing cashflows and z-spreads (solved once against the base curve
    and held constant across every scenario, so a scenario's delta EVE isolates the curve's own
    movement). Administered (NMD) positions use their behavioral-duration replicating ladder for
@@ -149,7 +173,7 @@ statement, and earnings-at-risk.
    symmetric by construction (+-D x shock x MV), full revaluation isn't - a falling-rate move typically
    helps EVE more than a rising-rate move of the same size hurts it. Reports the standard six IRRBB
    scenarios: parallel up/down, steepener, flattener, short rate up, short rate down.
-11. **Back-testing** ([core/backtest.py](core/backtest.py), `--backtest actuals.csv`) - compares the
+13. **Back-testing** ([core/backtest.py](core/backtest.py), `--backtest actuals.csv`) - compares the
     forecast against observed actuals (CSV: `month, actual_nii, actual_avg_earning_assets, actual_nim`),
     with an exact rate/volume/residual attribution of the monthly NII error (the three components sum
     to the total error by algebraic construction, not approximately). The residual is the rate x volume
@@ -158,8 +182,8 @@ statement, and earnings-at-risk.
     the model against itself with perturbed growth rates and a small rate offset: it demonstrates the
     harness's mechanics, not the model's real-world accuracy, since it's circular (the "actuals" are the
     model's own output). For a genuine out-of-sample check, see the real-actuals back-test below.
-12. **Real-actuals back-test** ([core/fdic_backtest.py](core/fdic_backtest.py), `--backtest-fdic N`,
-    requires `--bank-cert`) - a non-circular alternative to (11): calibrates the balance sheet as of `N`
+14. **Real-actuals back-test** ([core/fdic_backtest.py](core/fdic_backtest.py), `--backtest-fdic N`,
+    requires `--bank-cert`) - a non-circular alternative to (13): calibrates the balance sheet as of `N`
     quarters ago (reusing the same, now tag-driven, FDIC calibration path - see Data sources below),
     replays the *realized* historical Treasury curve between that quarter and today
     (`data_sources/treasury_curve.py::get_historical_curves`), and compares the model's aggregated
@@ -169,9 +193,9 @@ statement, and earnings-at-risk.
     as-of quarter's own reported figures (the same day-0 invariant used everywhere else in this model),
     so it's dropped before aggregating the remaining months into 3-month quarters for the comparison.
     Real error here is expected and is the point: the model doesn't know the bank's actual future
-    growth, mix shifts, or pricing decisions, so read the attribution the same way as (11) rather than
+    growth, mix shifts, or pricing decisions, so read the attribution the same way as (13) rather than
     tuning assumptions to make it look better.
-13. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
+15. **Outputs** ([reporting/](reporting/)) - Excel workbook (one sheet per report) + charts.
 
 ## Data sources
 
@@ -229,7 +253,7 @@ python main.py --deposit-history my_deposit_history.csv
 
 # Back-test the forecast against observed actuals (CSV columns: month, actual_nii,
 # actual_avg_earning_assets, actual_nim) - sample_actuals.csv ships in the repo, but is a
-# synthetic, circular demo of the harness, not a real accuracy check (see "How it works" (11))
+# synthetic, circular demo of the harness, not a real accuracy check (see "How it works" (13))
 python main.py --backtest sample_actuals.csv
 
 # Real out-of-sample back-test: calibrate as of 8 quarters ago, replay the realized Treasury
@@ -239,9 +263,9 @@ python main.py --bank-cert 6384 --backtest-fdic 8
 
 Outputs land in `outputs/`: `nim_forecast.xlsx` (NIM summary, sensitivity, rate sensitivity gap,
 duration detail/summary, linear and full-revaluation EVE sensitivity, structural liquidity,
-earnings-at-risk, FTP/ALM desk P&L, LCR, joint LCR-NIM view, AFS MTM, back-test vs actuals (either or
-both of the CSV-driven and FDIC real-actuals flavors, if requested), and full per-scenario bucket
-detail - one sheet each) plus 10 charts.
+earnings-at-risk, FTP/ALM desk P&L, LCR, NSFR, CET1 capital, joint LCR-NIM view, AFS MTM, back-test vs
+actuals (either or both of the CSV-driven and FDIC real-actuals flavors, if requested), and full
+per-scenario bucket detail - one sheet each) plus 12 charts.
 
 ## FTP policy spread calibration
 
@@ -297,6 +321,11 @@ see "Extending" below for how to tighten this up.
 - Tune `behavioral_duration_years` / `liquidity_decay_annual` per position in `balance_sheet.yaml` -
   these are behavioral assumptions a real ALCO would set from the bank's own deposit studies,
   not derived from the data.
+- The NSFR/RWA tables (`core/nsfr.py`, `core/capital.py`) are simplified: laddered positions blend ASF/
+  RSF factors off a uniform maturity ladder rather than real contractual maturity buckets, and RWA has
+  no market-risk or operational-risk component (real regulatory RWA does). Tune `Position.rwa_density` /
+  `rsf_factor_override` per position in `balance_sheet.yaml`, or extend `core/nsfr.py`'s blending rule,
+  for a closer match to a specific bank's actual regulatory capital/funding stack.
 - For stochastic/Monte Carlo rate paths (vs. today's deterministic shock scenarios), replace
   `curve/scenarios.py`'s path builder with a short-rate model (e.g. Vasicek/CIR) sampled N times,
   and run `core/engine.py` once per path to get a NIM distribution (and EaR/EVE distributions too).

@@ -59,14 +59,6 @@ RATE_SCENARIOS = {
 RAMP_MONTHS = 12  # scenario shock is ramped in linearly over this many months
 
 # ---------------------------------------------------------------------------
-# Balance sheet identity (see core/engine.py)
-# ---------------------------------------------------------------------------
-
-# Fraction of each month's net interest income retained into equity (vs paid
-# out as dividends). 1.0 = fully retained.
-RETENTION_RATIO = 1.0
-
-# ---------------------------------------------------------------------------
 # Rate indices (see core/indices.py)
 # ---------------------------------------------------------------------------
 
@@ -204,3 +196,56 @@ TRADING_LIMIT_PCT = 0.05
 # Flat policy spread over the overnight rate for core/ftp/straight_spread.py
 # (no tenor/duration lookup - a simple fallback method).
 FTP_STRAIGHT_SPREAD = 0.0025
+
+# ---------------------------------------------------------------------------
+# Net Stable Funding Ratio (NSFR) - see core/nsfr.py. Basel III standard ASF/
+# RSF factors (BCBS295, Oct 2014), simplified to the categories this balance
+# sheet actually uses; laddered positions blend the <1y and >=1y factors by
+# the fraction of the maturity ladder beyond 12 months (see core/nsfr.py's
+# module docstring for the exact blending rule).
+# ---------------------------------------------------------------------------
+NSFR_ASF_STABLE_RETAIL = 0.95
+NSFR_ASF_LESS_STABLE_RETAIL = 0.90
+NSFR_ASF_TERM_DEPOSIT_UNDER_1Y = 0.90       # under-1y portion of term deposits: treated as less-stable retail
+NSFR_ASF_WHOLESALE_UNDER_1Y = 0.50          # wholesale funding under 6m and 6m-1y both get 50% (BCBS295)
+NSFR_ASF_OVER_1Y = 1.00                     # any liability category, once residual maturity >= 1y
+
+NSFR_RSF_CASH = 0.00
+NSFR_RSF_L1 = 0.05
+NSFR_RSF_L2A = 0.15
+NSFR_RSF_L2B = 0.50
+NSFR_RSF_LOAN_UNDER_1Y = 0.50
+NSFR_RSF_LOAN_OVER_1Y = 0.85
+NSFR_RSF_OTHER = 1.00                       # any asset this table doesn't otherwise recognize
+
+# NSFR targets, drawn as a horizontal line on the NSFR-vs-target chart.
+NSFR_REGULATORY_MIN = 1.00
+
+# ---------------------------------------------------------------------------
+# Scenario-stressed LCR - see core/lcr.py compute_lcr(stressed=True). Per
+# outflow-category stress multiplier applied on top of the base run-off
+# factor (LCR_OUTFLOW_FACTORS), capped at 1.0 (a factor can't stress past
+# 100% of the balance). Illustrative severities, not a specific regulator's
+# prescribed stress scenario.
+# ---------------------------------------------------------------------------
+LCR_STRESS_MULTIPLIERS = {
+    "stable_retail": 1.20,
+    "less_stable_retail": 1.50,
+    "term_deposit": 1.20,
+    "wholesale_operational": 1.10,
+    "wholesale_non_operational": 1.25,
+}
+
+# ---------------------------------------------------------------------------
+# Capital-lite (CET1) - see core/capital.py. Standardized-approach RWA
+# densities live per position as Position.rwa_density (balance_sheet.yaml);
+# this section holds the ratio's policy thresholds and the dividend policy
+# that determines how much of each month's NII is retained into equity
+# (core/engine.py). DIVIDEND_PAYOUT_RATIO supersedes the old RETENTION_RATIO
+# (retention = 1 - payout): a single knob, not two ways to say the same thing.
+# ---------------------------------------------------------------------------
+DIVIDEND_PAYOUT_RATIO = 0.30
+
+CET1_REGULATORY_MIN = 0.045
+CET1_BUFFERED_MIN = 0.07
+CET1_INTERNAL_TARGET = 0.10

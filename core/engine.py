@@ -72,7 +72,7 @@ def _step_laddered(p, prev_balance, prev_rate, curve_t, t, basis_overlay=None):
     return laddered.step(p, prev_balance, prev_rate, curve_t, t, basis_overlay)
 
 
-def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, retention_ratio=None):
+def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=None, dividend_payout_ratio=None):
     """
     Simulates one rate scenario across all positions for len(curve_path) months.
     Returns (monthly_summary_df, position_detail_df, cohort_detail_df).
@@ -83,7 +83,8 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
     position-aggregated rows can't reconstruct on their own.
     """
     horizon = len(curve_path.curves)
-    retention_ratio = config.RETENTION_RATIO if retention_ratio is None else retention_ratio
+    dividend_payout_ratio = config.DIVIDEND_PAYOUT_RATIO if dividend_payout_ratio is None else dividend_payout_ratio
+    retention_ratio = 1 - dividend_payout_ratio
 
     if initial_equity:
         equity = initial_equity
@@ -262,7 +263,7 @@ def run_scenario(positions, curve_path, scenario_label="Base", initial_equity=No
     return pd.DataFrame(summary_rows), pd.DataFrame(detail_rows), pd.DataFrame(cohort_detail_rows)
 
 
-def run_all_scenarios(positions, curve_paths: dict, initial_equity=None, retention_ratio=None):
+def run_all_scenarios(positions, curve_paths: dict, initial_equity=None, dividend_payout_ratio=None):
     """
     curve_paths: {label: curve.scenarios.CurvePath}.
     Returns (combined_summary_df, {label: detail_df}, {label: cohort_detail_df}).
@@ -273,7 +274,7 @@ def run_all_scenarios(positions, curve_paths: dict, initial_equity=None, retenti
     for label, curve_path in curve_paths.items():
         summary_df, detail_df, cohort_detail_df = run_scenario(
             copy.deepcopy(positions), curve_path, scenario_label=label,
-            initial_equity=initial_equity, retention_ratio=retention_ratio,
+            initial_equity=initial_equity, dividend_payout_ratio=dividend_payout_ratio,
         )
         summaries.append(summary_df)
         details[label] = detail_df
